@@ -35,7 +35,8 @@ implementation expands approximately 3 GB of FP32 weights in host RAM.
 Run the check against the same weights dequantized to FP32 by the external
 reference. Use the b10159 Windows comparison binaries and Node.js. Omit
 `-Full` for the three-prompt smoke test. The full test evaluates 20 prompts
-and 64 greedy tokens per prompt.
+and 64 greedy tokens per prompt. Both runtimes use FP32 key and value caches
+for this CPU correctness comparison.
 
 ```powershell
 powershell -File scripts\verify_qwen_cpu.ps1 -Model 'PATH\TO\Qwen.gguf' -ReferenceBin 'PATH\TO\llama-b10159-bin-win-cuda-13.3-x64' -Full

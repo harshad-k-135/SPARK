@@ -41,7 +41,7 @@ try {
     $server = @{
         FilePath = Join-Path $ReferenceBin 'llama-server.exe'
         WorkingDirectory = $ReferenceBin
-        ArgumentList = '-m "{0}" --host 127.0.0.1 --port {1} -ngl 0 -c 2048 -np 1 -t 6' -f $fp32, $Port
+        ArgumentList = '-m "{0}" --host 127.0.0.1 --port {1} -ngl 0 -c 2048 -np 1 -t 6 -ctk f32 -ctv f32 -fa off' -f $fp32, $Port
         RedirectStandardOutput = Join-Path $dir 'server-out.log'
         RedirectStandardError = Join-Path $dir 'server-err.log'
         WindowStyle = 'Hidden'
