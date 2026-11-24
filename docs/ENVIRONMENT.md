@@ -25,3 +25,9 @@ interpreter. CMake, clang-format, and clang-tidy were unavailable on PATH.
 Direct connections from the shell to Hugging Face and PyPI failed, and the
 local Hugging Face cache did not contain the pinned model. The local
 interpreters checked also lacked the PyTorch and Transformers reference stack.
+
+The native MinGW CPU build now generates Qwen text from the supplied GGUF.
+A CUDA C++ compilation probe using `nvcc -std=c++20 -arch=sm_86` failed with
+`nvcc fatal: Cannot find compiler 'cl.exe' in PATH`. The RTX 3050 still
+passed the CUDA 12.8 allocation probe in the same workspace. The CUDA build
+requires an available CUDA-compatible Windows host compiler.
