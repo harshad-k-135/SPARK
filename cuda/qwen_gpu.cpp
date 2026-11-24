@@ -312,6 +312,17 @@ struct GpuModel::Impl {
                                reinterpret_cast<float*>(out), 1));
     }
 
+    void reset() {
+        for (const auto& layer : layers) {
+            if (!layer.state) continue;
+            SPARK_CUDA(cuMemsetD32Async(layer.state, 0, 16 * 128 * 128, stream.value));
+            SPARK_CUDA(cuMemsetD32Async(layer.history, 0, 3 * 6144, stream.value));
+        }
+        SPARK_CUDA(cuStreamSynchronize(stream.value));
+        length = 0;
+        emitted = 0;
+    }
+
     std::span<const float> step(TokenId token, bool emit) {
         if (token >= vocab || length >= capacity) throw std::out_of_range("invalid CUDA token or position");
         const bool trace = emit && emitted == 1 && profile.enabled();
@@ -366,6 +377,7 @@ GpuModel::GpuModel(const Gguf& gguf, const std::filesystem::path& path, std::siz
                    bool profile)
     : impl_(std::make_unique<Impl>(gguf, path, context, profile)) {}
 GpuModel::~GpuModel() = default;
+void GpuModel::reset() { impl_->reset(); }
 std::span<const float> GpuModel::step(TokenId token, bool logits) { return impl_->step(token, logits); }
 
 void test_qwen_cuda_ops() {

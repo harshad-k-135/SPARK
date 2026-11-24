@@ -9,6 +9,7 @@ class CpuModel {
 public:
     CpuModel(const Gguf& gguf, const std::filesystem::path& path, std::size_t context);
     ~CpuModel();
+    void reset();
     // Consume one token; request logits only at generation boundaries.
     std::span<const float> step(TokenId token, bool logits);
 private:

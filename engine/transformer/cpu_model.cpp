@@ -282,6 +282,14 @@ CpuModel::CpuModel(const Gguf& gguf, const std::filesystem::path& path, std::siz
     : impl_(std::make_unique<Impl>(gguf, path, context)) {}
 CpuModel::~CpuModel() = default;
 
+void CpuModel::reset() {
+    impl_->position = 0;
+    for (auto& layer : impl_->layers) {
+        std::ranges::fill(layer.state, 0.0F);
+        std::ranges::fill(layer.history, 0.0F);
+    }
+}
+
 std::span<const float> CpuModel::step(TokenId token, bool logits) { return impl_->step(token, logits); }
 
 }  // namespace spark

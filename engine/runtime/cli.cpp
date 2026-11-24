@@ -10,6 +10,7 @@
 #include <cmath>
 #include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
@@ -32,7 +33,8 @@ constexpr auto usage =
     "       spark generate --model FILE.gguf (--prompt TEXT [--chat] | --prompt-ids IDS)\n"
     "              [--device cpu|cuda] [--max-new-tokens N] [--context N] [--temperature T]\n"
     "              [--top-p P] [--seed N]\n"
-    "              [--ignore-eos] [--ids] [--first-logits PATH] [--profile]\n";
+    "              [--ignore-eos] [--ids] [--first-logits PATH] [--profile] [--timings]\n"
+    "              [--warmups N] [--trials N]\n";
 
 template <typename T>
 void parse_number(std::string_view value, T& result, std::string_view option) {
@@ -71,17 +73,19 @@ void generate(const std::vector<std::string>& args) {
     if (args.size() < 5 || args[1] != "--model" ||
         (args[3] != "--prompt" && args[3] != "--prompt-ids"))
         throw std::invalid_argument(usage);
-    bool chat = false, ids_only = false, ignore_eos = false, profile = false;
+    bool chat = false, ids_only = false, ignore_eos = false, profile = false, timings = false;
     std::string_view device = "cpu";
     std::filesystem::path logits_path;
     std::size_t count = 64;
     std::size_t context = 2048;
+    std::size_t warmups = 0, trials = 1;
     spark::SamplingOptions sampling;
     for (std::size_t i = 5; i < args.size(); ++i) {
         if (args[i] == "--chat") chat = true;
         else if (args[i] == "--ids") ids_only = true;
         else if (args[i] == "--ignore-eos") ignore_eos = true;
         else if (args[i] == "--profile") profile = true;
+        else if (args[i] == "--timings") timings = true;
         else if (args[i] == "--device" && i + 1 < args.size()) device = args[++i];
         else if (args[i] == "--first-logits" && i + 1 < args.size()) {
             const auto& value = args[++i];
@@ -101,6 +105,12 @@ void generate(const std::vector<std::string>& args) {
         } else if (args[i] == "--seed" && i + 1 < args.size()) {
             parse_number(args[i + 1], sampling.seed, args[i]);
             ++i;
+        } else if (args[i] == "--warmups" && i + 1 < args.size()) {
+            parse_number(args[i + 1], warmups, args[i]);
+            ++i;
+        } else if (args[i] == "--trials" && i + 1 < args.size()) {
+            parse_number(args[i + 1], trials, args[i]);
+            ++i;
         } else throw std::invalid_argument(usage);
     }
     if (context == 0 || context > 4096 || count == 0 || count > context)
@@ -111,6 +121,15 @@ void generate(const std::vector<std::string>& args) {
         throw std::invalid_argument("--device must be cpu or cuda");
     if (profile && device != "cuda")
         throw std::invalid_argument("--profile requires --device cuda");
+    if (trials == 0 || trials > 100 || warmups > 100)
+        throw std::invalid_argument("invalid warmup or trial count");
+    if ((warmups || trials != 1) && (!timings || !logits_path.empty()))
+        throw std::invalid_argument("repeated runs require --timings and omit --first-logits");
+    using Clock = std::chrono::steady_clock;
+    const auto milliseconds = [](auto start, auto end) {
+        return std::chrono::duration<double, std::milli>(end - start).count();
+    };
+    const auto load_start = Clock::now();
     const auto path = std::filesystem::path(std::u8string(args[2].begin(), args[2].end()));
     const spark::Gguf model(path);
     const spark::Tokenizer tokenizer(model);
@@ -136,45 +155,84 @@ void generate(const std::vector<std::string>& args) {
     if (device == "cuda") throw std::runtime_error("this SPARK build has no CUDA backend");
 #endif
     if (device == "cpu") cpu = std::make_unique<spark::CpuModel>(model, path, context);
+    const auto loaded = Clock::now();
     const auto step = [&](spark::TokenId token, bool emit) {
 #ifdef SPARK_WITH_CUDA
         if (gpu) return gpu->step(token, emit);
 #endif
         return cpu->step(token, emit);
     };
-    std::span<const float> logits;
-    for (std::size_t i = 0; i < input.size(); ++i)
-        logits = step(input[i], i + 1 == input.size());
-    if (!logits_path.empty()) {
-        std::ofstream file(logits_path, std::ios::binary);
-        if (!file.write(reinterpret_cast<const char*>(logits.data()),
-                        static_cast<std::streamsize>(logits.size_bytes())))
-            throw std::runtime_error("could not write first-step logits");
-    }
     const auto is_eos = [&](spark::TokenId token) {
         return token == eos || (end_of_text.size() == 1 && token == end_of_text.front());
     };
-    spark::Sampler sampler(logits.size(), sampling);
-    std::vector<spark::TokenId> output;
-    output.reserve(count);
-    for (std::size_t i = 0; i < count; ++i) {
-        auto token = sampler.sample(logits);
-        if (is_eos(token)) {
-            if (!ignore_eos) break;
-            auto best = -std::numeric_limits<float>::infinity();
-            for (std::size_t j = 0; j < logits.size(); ++j) {
-                const auto candidate = static_cast<spark::TokenId>(j);
-                if (!is_eos(candidate) && logits[j] > best) {
-                    best = logits[j];
-                    token = candidate;
+    const auto trial = [&](std::size_t run, bool warmup, bool display) {
+        const auto prefill_start = Clock::now();
+        std::span<const float> logits;
+        for (std::size_t i = 0; i < input.size(); ++i)
+            logits = step(input[i], i + 1 == input.size());
+        const auto prefill_end = Clock::now();
+        if (!logits_path.empty()) {
+            std::ofstream file(logits_path, std::ios::binary);
+            if (!file.write(reinterpret_cast<const char*>(logits.data()),
+                            static_cast<std::streamsize>(logits.size_bytes())))
+                throw std::runtime_error("could not write first-step logits");
+        }
+        spark::Sampler sampler(logits.size(), sampling);
+        std::vector<spark::TokenId> output;
+        output.reserve(count);
+        auto first_token = prefill_end;
+        auto last_token = prefill_end;
+        for (std::size_t i = 0; i < count; ++i) {
+            auto token = sampler.sample(logits);
+            if (is_eos(token)) {
+                if (!ignore_eos) break;
+                auto best = -std::numeric_limits<float>::infinity();
+                for (std::size_t j = 0; j < logits.size(); ++j) {
+                    const auto candidate = static_cast<spark::TokenId>(j);
+                    if (!is_eos(candidate) && logits[j] > best) {
+                        best = logits[j];
+                        token = candidate;
+                    }
                 }
             }
+            if (timings) {
+                last_token = Clock::now();
+                if (output.empty()) first_token = last_token;
+            }
+            output.push_back(token);
+            if (display && !ids_only)
+                std::cout << tokenizer.decode(std::span(&token, 1), true) << std::flush;
+            if (i + 1 < count) logits = step(token, true);
         }
-        output.push_back(token);
-        if (!ids_only) std::cout << tokenizer.decode(std::span(&token, 1), true) << std::flush;
-        if (i + 1 < count) logits = step(token, true);
+        if (display) {
+            if (ids_only) print_ids(output); else std::cout << '\n';
+        }
+        if (timings) {
+            const auto prefill = milliseconds(prefill_start, prefill_end);
+            const auto decode = milliseconds(first_token, last_token);
+            std::cerr << "{\"event\":\"generation_timings\",\"device\":\"" << device
+                      << "\",\"trial\":" << run << ",\"warmup\":" << (warmup ? "true" : "false")
+                      << ",\"load_ms\":" << milliseconds(load_start, loaded)
+                      << ",\"prefill_ms\":" << prefill
+                      << ",\"first_token_ms\":" << milliseconds(prefill_start, first_token)
+                      << ",\"decode_ms\":" << decode
+                      << ",\"prompt_tokens\":" << input.size()
+                      << ",\"generated_tokens\":" << output.size()
+                      << ",\"prefill_tokens_per_sec\":" << (prefill > 0 ? input.size() * 1000.0 / prefill : 0)
+                      << ",\"decode_tokens_per_sec\":"
+                      << (output.size() > 1 && decode > 0 ? (output.size() - 1) * 1000.0 / decode : 0)
+                      << "}\n";
+        }
+    };
+    for (std::size_t i = 0; i < warmups + trials; ++i) {
+        if (i > 0) {
+#ifdef SPARK_WITH_CUDA
+            if (gpu) gpu->reset(); else
+#endif
+            cpu->reset();
+        }
+        trial(i + 1, i < warmups, warmups + trials == 1);
     }
-    if (ids_only) print_ids(output); else std::cout << '\n';
 }
 
 void inspect(const std::filesystem::path& path, bool list_tensors) {
