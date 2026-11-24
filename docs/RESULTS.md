@@ -28,3 +28,27 @@ logit error, and 64-token continuation agreement remain pending.
 GPU throughput, latency, profiling, and perplexity measurements await the
 corresponding earlier gates. See [hardware and toolkit](ENVIRONMENT.md) and
 the [benchmark protocol](BENCHMARK_PROTOCOL.md).
+
+## Local Qwen compatibility smoke test
+
+The supplied Qwen3.5-0.8B Q4_K_M GGUF ran through the external llama.cpp server
+at build b10159 (`f95de9776`). The upstream model revision for this GGUF is
+unknown. Its file SHA-256 is
+`fb044e93939a70469c905781334f5de1e6c8b608ced6cbc8c9249bd4127d9526`.
+The server used one slot and a 2,048-token context. The health check and
+model-list endpoint succeeded. A greedy chat request asking for the sum
+of 2 + 2 returned `4`. [API evidence](../benchmark/results/qwen-local-smoke/02-qwen-api.png)
+
+The bundled browser UI served its HTML, JavaScript, and stylesheet with HTTP
+200. Browser rendering and interaction remain unverified after the Windows
+desktop capture and headless browser attempts failed.
+[Frontend HTTP evidence](../benchmark/results/qwen-local-smoke/03-frontend-http.png)
+
+The CUDA 12.8 runtime saw the RTX 3050 and allocated 4,096 bytes. The external
+CUDA 13.3 build listed zero GPU devices and its CUDA backend imports
+`cublas64_13.dll`. The Qwen chat request ran on CPU.
+[Device evidence](../benchmark/results/qwen-local-smoke/01-cuda-device.png)
+
+Native SPARK rejected the GGUF and passed its existing CPU fixture again.
+Gate 1 remains blocked pending the official Llama snapshot and reference.
+[Native evidence](../benchmark/results/qwen-local-smoke/04-spark-native.png)
