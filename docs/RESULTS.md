@@ -101,6 +101,9 @@ The local server returned HTTP 200 for the dashboard and JavaScript.
 The native worker returned `4` for the arithmetic prompt and produced
 16 tokens on a second request using the same loaded worker. The runs API
 returned the baseline and graph data and accepted a new benchmark request.
-Windows denied launching the interactive browser from the sandbox, so the
-live frontend was verified through its HTTP assets and API.
+The dashboard-triggered benchmark completed and stored all ten measured
+trials. Median decode throughput was 46.33 tokens/sec. Windows denied
+launching the interactive browser from the sandbox, so the frontend was
+verified through its HTTP assets and API.
 [Raw generation events](../benchmark/results/qwen-local-smoke/dashboard-generation.jsonl)
+· [Dashboard-triggered raw trials](../benchmark/results/spark-qwen-dashboard-repeat.json)

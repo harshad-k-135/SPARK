@@ -29,7 +29,8 @@ async function main() {
 
     const modelHash = createHash('sha256');
     for await (const chunk of createReadStream(model)) modelHash.update(chunk);
-    const { stdout: commit } = await execute('git', ['rev-parse', 'HEAD']);
+    const revision = process.env.SPARK_SOURCE_COMMIT || 'HEAD';
+    const { stdout: commit } = await execute('git', ['rev-parse', '--verify', '--end-of-options', revision + '^{commit}']);
     const { stdout: hardware } = await execute('nvidia-smi', [
         '--query-gpu=name,driver_version,pstate,memory.total', '--format=csv,noheader',
     ]);
