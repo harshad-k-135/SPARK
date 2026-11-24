@@ -16,7 +16,7 @@
       <text x="50" y="212">Tokenizer</text><text x="380" y="212">Passed</text><text x="510" y="212">8/8 prompts matched reference token IDs</text>
       <text x="50" y="252">CPU DeltaNet recurrence</text><text x="380" y="252">Passed</text><text x="510" y="252">State and output matched two-step fixture</text>
       <text x="50" y="292">CUDA allocation probe</text><text x="380" y="292">Passed</text><text x="510" y="292">4 KiB allocated and freed</text>
-      <text x="50" y="332">End-to-end CPU parity</text><text x="380" y="332">Pending</text><text x="510" y="332">Full text forward pass required</text>
+      <text x="50" y="332">Native CPU generation smoke</text><text x="380" y="332">Passed</text><text x="510" y="332">33/33 generated IDs matched FP32 reference</text>
       <text x="50" y="372">GPU generation and frontend</text><text x="380" y="372">Pending</text><text x="510" y="372">Await CPU parity and CUDA implementation</text>
     </g>
   </g>

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="330" viewBox="0 0 900 330" role="img" aria-labelledby="t">
+  <title id="t">CPU generation smoke agreement with the FP32 reference</title>
+  <rect width="900" height="330" fill="#f7fafc"/>
+  <g font-family="Segoe UI, sans-serif" fill="#142335">
+    <text x="35" y="49" font-size="27" font-weight="700">Native Qwen CPU generation</text>
+    <text x="35" y="81" font-size="16">First-step logit gap error across the reference's eight most likely tokens</text>
+    <g stroke="#c9d4df"><path d="M200 108v148M300 108v148M400 108v148M500 108v148M600 108v148M700 108v148"/></g>
+    <g fill="#146b79">
+      <rect x="200" y="122" width="342.1813" height="22" rx="3"/>
+      <rect x="200" y="172" width="235.7483" height="22" rx="3"/>
+      <rect x="200" y="222" width="406.0693" height="22" rx="3"/>
+    </g>
+    <g font-size="16">
+      <text x="35" y="139">Arithmetic</text><text x="555" y="139">0.003422</text>
+      <text x="35" y="189">Science</text><text x="449" y="189">0.002357</text>
+      <text x="35" y="239">Multilingual</text><text x="619" y="239">0.004061</text>
+    </g>
+    <g font-size="13" text-anchor="middle">
+      <text x="200" y="277">0</text><text x="300" y="277">0.001</text>
+      <text x="400" y="277">0.002</text><text x="500" y="277">0.003</text>
+      <text x="600" y="277">0.004</text><text x="700" y="277">0.005</text>
+    </g>
+    <text x="35" y="310" font-size="15">33 of 33 generated token IDs matched using the same dequantized model weights.</text>
+  </g>
+</svg>

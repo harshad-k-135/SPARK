@@ -34,3 +34,5 @@ reference used a separate FP32 GGUF created from the same packed weights with
 received identical prompt IDs. The maximum first-step logit-gap difference
 over the reference's top eight tokens was 0.004061. The packed CPU reference
 diverged on the multilingual prompt and had a higher first-step error.
+[Raw smoke output](../benchmark/results/qwen-local-smoke/native-generation-f32.jsonl)
+· [Logit gap chart](../benchmark/results/qwen-local-smoke/native-generation-f32.svg)
