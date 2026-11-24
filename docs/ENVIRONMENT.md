@@ -28,6 +28,8 @@ interpreters checked also lacked the PyTorch and Transformers reference stack.
 
 The native MinGW CPU build now generates Qwen text from the supplied GGUF.
 A CUDA C++ compilation probe using `nvcc -std=c++20 -arch=sm_86` failed with
-`nvcc fatal: Cannot find compiler 'cl.exe' in PATH`. The RTX 3050 still
-passed the CUDA 12.8 allocation probe in the same workspace. The CUDA build
-requires an available CUDA-compatible Windows host compiler.
+`nvcc fatal: Cannot find compiler 'cl.exe' in PATH`. A MinGW C++20 host
+linked against the installed CUDA driver, runtime, NVRTC and cuBLAS import
+libraries and successfully initialized all four. NVRTC 12.8 compiled a
+`compute_86` kernel, and the CUDA driver launched it on a non-default stream.
+The RTX 3050 wrote the expected value `3050` to a four-byte GPU buffer.
