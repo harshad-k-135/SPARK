@@ -10,7 +10,7 @@
 | Native Qwen CPU generation | Smoke passed | Native output matched the independent FP32 comparison on 3/3 prompts and 33/33 generated IDs. |
 | 1 — Qwen CPU parity | Passed | All 20 first tokens and 1,280 greedy continuation IDs matched. Maximum first-step logit-gap error with FP32 KV on both sides was 0.001041. |
 | Native Qwen CUDA generation | Smoke passed | CUDA generated `4` on the RTX 3050 from the supplied GGUF. The arena used 3,088,575,744 bytes at 2,048 context. Fixed-seed CUDA operation tests passed. |
-| 2 — Qwen CUDA parity and baseline | Parity passed | All 20 first tokens and 1,280 continuation IDs matched the FP32 reference. Maximum first-step logit-gap error was 0.001081. Baseline measurements and profiles pending. |
+| 2 — Qwen CUDA parity and baseline | Passed | All 20 first tokens and 1,280 continuation IDs matched. Maximum first-step logit-gap error was 0.001081. Baseline and profiler evidence recorded below. |
 | 3 — Optimized Qwen decode | Pending Gate 2 | |
 | 4 — GPU comparison and control API | Pending Gate 3 | |
 
@@ -53,3 +53,25 @@ maximum first-step logit-gap error was 0.001041 over 248,320 logits per prompt.
 Native CUDA also matched every continuation with FP32 KV. Its largest
 first-step logit-gap error was 0.001081 across the full vocabulary.
 [CUDA full-run output](../benchmark/results/qwen-local-smoke/native-cuda-generation-fp32-kv-reference.jsonl)
+
+## Native CUDA baseline
+
+RTX 3050 6 GB Laptop GPU, driver 596.08, CUDA 12.8, Windows Balanced power
+scheme on AC. The session used 512 fixed prompt IDs, forced 128 output tokens,
+2,048-token context, five warm-ups, and ten measured requests. First-token
+timing starts at prefill because the harness passes pretokenized input.
+
+| Metric | Median | IQR | P95 |
+| --- | ---: | ---: | ---: |
+| Decode tokens/sec | 40.46 | 0.75 | 42.27 |
+| Prefill tokens/sec | 70.18 | 7.45 | 70.81 |
+| First token from prefill (ms) | 7,296.86 | 858.56 | 8,865.95 |
+| Decode latency (ms) | 3,139.06 | 58.13 | 3,433.72 |
+
+The FP32 arena used 3,088,575,744 bytes. The short-prompt CUDA event profile
+recorded 5.76 ms for recurrent layers, 1.54 ms for attention layers, 7.17 ms
+for MLP, and 6.23 ms for the output projection and final norm. Nsight Systems
+saved a CUDA trace. Nsight Compute returned `ERR_NVGPUCTRPERM` because GPU
+performance counters were unavailable to the current account.
+[Raw baseline](../benchmark/results/spark-qwen-v0.json)
+· [Nsight Systems report](profiles/spark-qwen-v0.nsys-rep)
