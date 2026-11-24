@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SPARK inference dashboard</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/dashboard.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">SPARK <span>Inference dashboard</span></div>
+    <div id="device" class="badge">Connecting</div>
+  </header>
+  <main>
+    <div class="intro">
+      <div>
+        <h1>Local Qwen inference</h1>
+        <p>Qwen3.5 0.8B · Q4_K_M GGUF · NVIDIA RTX 3050</p>
+      </div>
+      <p id="model" class="model"></p>
+    </div>
+    <div class="layout">
+      <section class="panel">
+        <div class="heading"><h2>Generate</h2><p id="generation-state" role="status">Ready</p></div>
+        <form id="generation">
+          <label for="prompt">Prompt</label>
+          <textarea id="prompt" required maxlength="8192" rows="4">In one sentence, explain why the sky appears blue.</textarea>
+          <div class="actions">
+            <div class="token-limit"><label for="limit">Max tokens</label><input id="limit" type="number" min="1" max="512" value="64" required></div>
+            <button id="stop" type="button" hidden>Stop</button>
+            <button class="primary" id="send" type="submit">Generate</button>
+          </div>
+        </form>
+        <div class="response">
+          <h3>Response</h3>
+          <pre id="text" aria-live="polite"></pre>
+          <dl class="metrics">
+            <div><dt>First token</dt><dd id="ttft">—</dd></div>
+            <div><dt>Decode</dt><dd id="decode">—</dd></div>
+            <div><dt>Tokens</dt><dd id="generated">—</dd></div>
+          </dl>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="heading"><h2>Compare</h2><p>512 prompt · 128 output</p></div>
+        <div class="comparison">
+          <h3>Median decode tokens/sec</h3>
+          <div id="chart"></div>
+          <p class="note">llama.cpp GPU comparison requires a CUDA-enabled comparison build that detects this device.</p>
+        </div>
+        <form id="benchmark" class="benchmark">
+          <div><label for="mode">Runtime configuration</label>
+            <select id="mode"><option value="bucket">Bucketed CUDA Graph</option><option value="baseline">SPARK baseline</option></select>
+          </div>
+          <button id="run" type="submit">Run benchmark</button>
+        </form>
+        <p id="benchmark-state" role="status"></p>
+        <label for="trials">Inspect a run</label>
+        <select id="trials" aria-label="Benchmark run"></select>
+        <div id="details"></div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

@@ -15,5 +15,7 @@
   position through a device-side scalar. Prefill stays on the baseline path.
 - Bucket result. 46.08 median decode tokens/sec, 2,760.61 ms P95 decode
   latency, and a 3,088,575,744-byte device arena. All 20 parity cases passed.
-  Keep the bucket variant available for this workload. The single-graph
-  comparison is still running. [Raw trials](../benchmark/results/spark-qwen-graph-bucket.json)
+  Keep the bucket variant for this workload. [Raw trials](../benchmark/results/spark-qwen-graph-bucket.json)
+- Single-graph result. 45.92 median decode tokens/sec, 2,774.40 ms P95 decode
+  latency, and all 20 parity cases passed. Keep this mode available for
+  reproducing the comparison. [Raw trials](../benchmark/results/spark-qwen-graph-single.json)

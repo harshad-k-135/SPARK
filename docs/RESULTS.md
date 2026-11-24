@@ -12,7 +12,7 @@
 | Native Qwen CUDA generation | Smoke passed | CUDA generated `4` on the RTX 3050 from the supplied GGUF. The arena used 3,088,575,744 bytes at 2,048 context. Fixed-seed CUDA operation tests passed. |
 | 2 — Qwen CUDA parity and baseline | Passed | All 20 first tokens and 1,280 continuation IDs matched. Maximum first-step logit-gap error was 0.001081. Baseline and profiler evidence recorded below. |
 | 3 — Optimized Qwen decode | Passed | Bucketed CUDA Graphs passed all 20 parity cases and raised median native decode throughput from 40.46 to 46.08 tokens/sec on the primary workload. |
-| 4 — GPU comparison and control API | In progress | The installed external CUDA binary enumerates zero usable GPU devices. |
+| 4 — GPU comparison and control API | Partial | The native FastAPI dashboard served its assets and streamed output from the RTX 3050. The installed external CUDA binary enumerates zero usable GPU devices. |
 
 Target file `Qwen_Qwen3.5-0.8B-Q4_K_M.gguf`, SHA-256
 `fb044e93939a70469c905781334f5de1e6c8b608ced6cbc8c9249bd4127d9526`.
@@ -24,8 +24,8 @@ The first Q6_K embedding row decoded to finite values from `-0.0759277` to
 `0.0695343`. A deliberately truncated copy of the GGUF header was rejected.
 
 The recorded [external Qwen API smoke test](../benchmark/results/qwen-local-smoke/02-qwen-api.png)
-ran on CPU. Live SPARK frontend captures and matched performance comparisons
-are pending.
+ran on CPU. Live SPARK frontend captures and a matched llama.cpp GPU
+comparison remain pending.
 
 [Sandbox verification chart](../benchmark/results/qwen-local-smoke/native-qwen-coverage.svg)
 
@@ -85,3 +85,21 @@ matched, with a maximum first-step logit-gap error of 0.001081.
 This comparison is against the native SPARK baseline.
 [Raw trials](../benchmark/results/spark-qwen-graph-bucket.json)
 · [CUDA Graph parity](../benchmark/results/qwen-local-smoke/native-cuda-bucket-parity.jsonl)
+
+The single-graph variant also passed all 20 prompts. Median decode was
+45.92 tokens/sec, and P95 decode latency was 2,774.40 ms. The bucketed
+variant had the higher measured median and is used by the interactive worker.
+Both graph measurements used the executable built from `b87af6d`.
+The single-graph raw metadata also records the later documentation-only
+checkout commit present at measurement time.
+[Single-graph raw trials](../benchmark/results/spark-qwen-graph-single.json)
+
+## Dashboard smoke run
+
+The local server returned HTTP 200 for the dashboard and JavaScript.
+The native worker returned `4` for the arithmetic prompt and produced
+16 tokens on a second request using the same loaded worker. The runs API
+returned the baseline and graph data and accepted a new benchmark request.
+Windows denied launching the interactive browser from the sandbox, so the
+live frontend was verified through its HTTP assets and API.
+[Raw generation events](../benchmark/results/qwen-local-smoke/dashboard-generation.jsonl)

@@ -4,8 +4,9 @@ SPARK (Specialized Public Accelerated Runtime for Kernels) targets batch-one
 Qwen3.5-0.8B text generation on an NVIDIA GeForce RTX 3050 Laptop GPU. The model
 target is the local Q4_K_M GGUF. SPARK reads the file in native C++20.
 
-SPARK runs native text generation on CPU and CUDA from this GGUF. The
-control API and frontend still require implementation.
+SPARK runs native text generation on CPU and CUDA from this GGUF. A local
+FastAPI dashboard streams responses from the CUDA worker and compares saved
+native benchmark runs.
 
 ## Build and inspect
 
@@ -49,5 +50,21 @@ powershell -File scripts\verify_qwen_cpu.ps1 -Model 'PATH\TO\Qwen.gguf' -Referen
 
 Results are written under `build/qwen-reference`. The CPU model and tests
 use the original GGUF. The expanded comparison GGUF is a local build artifact.
+
+## Run the dashboard locally
+
+Build SPARK with CUDA enabled. Install the API requirements in a Python
+environment and pass its interpreter with `-Python` if needed.
+
+```powershell
+python -m pip install -r api\requirements.txt
+powershell -File scripts\run_dashboard.ps1 -Model 'PATH\TO\Qwen.gguf'
+```
+
+Open the loopback address printed by Uvicorn, normally
+`http://127.0.0.1:8765/`. **Generate** starts the native CUDA worker on
+demand. **Compare** loads stored trial results and can queue another native
+benchmark. The service serializes generation and benchmarks on the GPU.
+An external GPU comparison requires a CUDA-capable llama.cpp build.
 
 See [gate results](docs/RESULTS.md) and the [model layout](docs/DESIGN.md).

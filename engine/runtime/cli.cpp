@@ -23,6 +23,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <cwchar>
+#include <fcntl.h>
+#include <io.h>
 #endif
 
 namespace {
@@ -30,6 +32,7 @@ namespace {
 constexpr auto usage =
     "Usage: spark inspect --model FILE.gguf [--tensors]\n"
     "       spark tokenize --model FILE.gguf --prompt TEXT [--special]\n"
+    "       spark serve --model FILE.gguf\n"
     "       spark generate --model FILE.gguf (--prompt TEXT [--chat] | --prompt-ids IDS)\n"
     "              [--device cpu|cuda] [--max-new-tokens N] [--context N] [--temperature T]\n"
     "              [--top-p P] [--seed N]\n"
@@ -68,6 +71,79 @@ void print_ids(std::span<const spark::TokenId> ids) {
         std::cout << ids[i];
     }
     std::cout << "]\n";
+}
+
+std::vector<spark::TokenId> encode_prompt(const spark::Tokenizer& tokenizer,
+                                          std::string_view text, bool chat) {
+    auto input = tokenizer.encode(text);
+    if (!chat) return input;
+    auto prefix = tokenizer.encode("<|im_start|>user\n", true);
+    const auto suffix = tokenizer.encode("<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n", true);
+    prefix.insert(prefix.end(), input.begin(), input.end());
+    prefix.insert(prefix.end(), suffix.begin(), suffix.end());
+    return prefix;
+}
+
+void serve(const std::filesystem::path& path) {
+#ifdef SPARK_WITH_CUDA
+    constexpr unsigned capacity = 2048;
+    const spark::Gguf model(path);
+    const spark::Tokenizer tokenizer(model);
+    const auto eos = std::get<std::uint64_t>(model.metadata("tokenizer.ggml.eos_token_id"));
+    const auto end = tokenizer.encode("<|endoftext|>", true);
+    spark::GpuModel session(model, path, capacity, false, spark::DecodeGraph::bucket);
+    std::cout << "{\"event\":\"ready\",\"device\":\"cuda\"}\n" << std::flush;
+    unsigned length = 0, maximum = 0;
+    while (std::cin >> length >> maximum) {
+        if (std::cin.get() != '\n' || length == 0 || length > 32768 || maximum == 0 || maximum > 512)
+            throw std::runtime_error("invalid worker request");
+        std::string prompt(length, '\0');
+        if (!std::cin.read(prompt.data(), length)) throw std::runtime_error("truncated worker request");
+        std::vector<spark::TokenId> input;
+        try {
+            input = encode_prompt(tokenizer, prompt, true);
+        } catch (const std::exception&) {
+            std::cout << "{\"event\":\"error\",\"error\":\"Invalid UTF-8 prompt.\"}\n" << std::flush;
+            continue;
+        }
+        if (input.size() > capacity - maximum) {
+            std::cout << "{\"event\":\"error\",\"error\":\"Prompt and output exceed the 2,048-token context.\"}\n"
+                      << std::flush;
+            continue;
+        }
+        session.reset();
+        using Clock = std::chrono::steady_clock;
+        const auto start = Clock::now();
+        auto first = start;
+        auto last = start;
+        std::span<const float> logits;
+        for (std::size_t i = 0; i < input.size(); ++i)
+            logits = session.step(input[i], i + 1 == input.size());
+        spark::Sampler sampler(logits.size(), {});
+        unsigned count = 0;
+        for (; count < maximum; ++count) {
+            const auto token = sampler.sample(logits);
+            if (token == eos || (end.size() == 1 && token == end.front())) break;
+            last = Clock::now();
+            if (count == 0) first = last;
+            const auto bytes = tokenizer.decode(std::span(&token, 1), true);
+            constexpr auto hex = "0123456789abcdef";
+            std::cout << "{\"event\":\"token\",\"bytes\":\"";
+            for (const unsigned char byte : bytes) std::cout << hex[byte >> 4] << hex[byte & 15];
+            std::cout << "\"}\n" << std::flush;
+            if (count + 1 < maximum) logits = session.step(token, true);
+        }
+        const auto ttft = std::chrono::duration<double, std::milli>(first - start).count();
+        const auto decode = std::chrono::duration<double>(last - first).count();
+        std::cout << "{\"event\":\"done\",\"prompt_tokens\":" << input.size()
+                  << ",\"generated_tokens\":" << count << ",\"first_token_ms\":" << ttft
+                  << ",\"decode_tokens_per_sec\":" << (count > 1 && decode > 0 ? (count - 1) / decode : 0)
+                  << "}\n" << std::flush;
+    }
+#else
+    (void)path;
+    throw std::runtime_error("this SPARK build has no CUDA worker");
+#endif
 }
 
 void generate(const std::vector<std::string>& args) {
@@ -144,14 +220,7 @@ void generate(const std::vector<std::string>& args) {
     const spark::Tokenizer tokenizer(model);
     const bool use_ids = args[3] == "--prompt-ids";
     if (use_ids && chat) throw std::invalid_argument("--chat requires a text prompt");
-    auto input = use_ids ? parse_ids(args[4]) : tokenizer.encode(args[4]);
-    if (chat) {
-        auto prefix = tokenizer.encode("<|im_start|>user\n", true);
-        const auto suffix = tokenizer.encode("<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n", true);
-        prefix.insert(prefix.end(), input.begin(), input.end());
-        prefix.insert(prefix.end(), suffix.begin(), suffix.end());
-        input = std::move(prefix);
-    }
+    auto input = use_ids ? parse_ids(args[4]) : encode_prompt(tokenizer, args[4], chat);
     if (input.empty() || input.size() > context - count)
         throw std::invalid_argument("prompt and output exceed the context or prompt is empty");
     const auto eos = std::get<std::uint64_t>(model.metadata("tokenizer.ggml.eos_token_id"));
@@ -323,6 +392,14 @@ int run(const std::vector<std::string>& args) {
     }
     if (args[0] == "generate") {
         generate(args);
+        return 0;
+    }
+    if (args[0] == "serve" && args.size() == 3 && args[1] == "--model") {
+#ifdef _WIN32
+        if (_setmode(_fileno(stdin), _O_BINARY) < 0 || _setmode(_fileno(stdout), _O_BINARY) < 0)
+            throw std::runtime_error("cannot configure worker pipe mode");
+#endif
+        serve(std::filesystem::path(std::u8string(args[2].begin(), args[2].end())));
         return 0;
     }
     if ((args.size() == 5 || args.size() == 6) && args[0] == "tokenize" && args[1] == "--model" &&
