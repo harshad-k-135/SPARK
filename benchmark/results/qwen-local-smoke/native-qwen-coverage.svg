@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="424" viewBox="0 0 960 424" role="img" aria-labelledby="title">
+  <title id="title">Qwen3.5 sandbox verification by stage</title>
+  <rect width="960" height="424" fill="#f7fafc"/>
+  <g font-family="Segoe UI, sans-serif" fill="#142335">
+    <text x="36" y="51" font-size="30" font-weight="700">Native Qwen3.5 sandbox verification</text>
+    <text x="36" y="85" font-size="17">Qwen3.5-0.8B Q4_K_M on the RTX 3050 Laptop GPU host</text>
+    <g fill="#e9eff5">
+      <rect x="36" y="106" width="888" height="40"/>
+      <rect x="36" y="186" width="888" height="40"/>
+      <rect x="36" y="266" width="888" height="40"/>
+      <rect x="36" y="346" width="888" height="40"/>
+    </g>
+    <g font-size="17">
+      <text x="50" y="132">GGUF structure</text><text x="380" y="132">Passed</text><text x="510" y="132">335 tensors across 25 file blocks</text>
+      <text x="50" y="172">Packed weights</text><text x="380" y="172">Passed</text><text x="510" y="172">Unit tests and real embedding row</text>
+      <text x="50" y="212">Tokenizer</text><text x="380" y="212">Passed</text><text x="510" y="212">8/8 prompts matched reference token IDs</text>
+      <text x="50" y="252">CPU DeltaNet recurrence</text><text x="380" y="252">Passed</text><text x="510" y="252">State and output matched two-step fixture</text>
+      <text x="50" y="292">CUDA allocation probe</text><text x="380" y="292">Passed</text><text x="510" y="292">4 KiB allocated and freed</text>
+      <text x="50" y="332">End-to-end CPU parity</text><text x="380" y="332">Pending</text><text x="510" y="332">Full text forward pass required</text>
+      <text x="50" y="372">GPU generation and frontend</text><text x="380" y="372">Pending</text><text x="510" y="372">Await CPU parity and CUDA implementation</text>
+    </g>
+  </g>
+</svg>

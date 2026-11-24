@@ -24,3 +24,5 @@ The first Q6_K embedding row decoded to finite values from `-0.0759277` to
 The recorded [external Qwen API smoke test](../benchmark/results/qwen-local-smoke/02-qwen-api.png)
 ran on CPU. GPU inference, live SPARK frontend captures, and matched performance
 comparisons are pending.
+
+[Sandbox verification chart](../benchmark/results/qwen-local-smoke/native-qwen-coverage.svg)
