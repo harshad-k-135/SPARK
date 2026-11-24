@@ -11,8 +11,8 @@
 | 1 — Qwen CPU parity | Passed | All 20 first tokens and 1,280 greedy continuation IDs matched. Maximum first-step logit-gap error with FP32 KV on both sides was 0.001041. |
 | Native Qwen CUDA generation | Smoke passed | CUDA generated `4` on the RTX 3050 from the supplied GGUF. The arena used 3,088,575,744 bytes at 2,048 context. Fixed-seed CUDA operation tests passed. |
 | 2 — Qwen CUDA parity and baseline | Passed | All 20 first tokens and 1,280 continuation IDs matched. Maximum first-step logit-gap error was 0.001081. Baseline and profiler evidence recorded below. |
-| 3 — Optimized Qwen decode | Pending Gate 2 | |
-| 4 — GPU comparison and control API | Pending Gate 3 | |
+| 3 — Optimized Qwen decode | Passed | Bucketed CUDA Graphs passed all 20 parity cases and raised median native decode throughput from 40.46 to 46.08 tokens/sec on the primary workload. |
+| 4 — GPU comparison and control API | In progress | The installed external CUDA binary enumerates zero usable GPU devices. |
 
 Target file `Qwen_Qwen3.5-0.8B-Q4_K_M.gguf`, SHA-256
 `fb044e93939a70469c905781334f5de1e6c8b608ced6cbc8c9249bd4127d9526`.
@@ -75,3 +75,13 @@ saved a CUDA trace. Nsight Compute returned `ERR_NVGPUCTRPERM` because GPU
 performance counters were unavailable to the current account.
 [Raw baseline](../benchmark/results/spark-qwen-v0.json)
 · [Nsight Systems report](profiles/spark-qwen-v0.nsys-rep)
+
+## Bucketed CUDA Graph result
+
+On the same model, device, prompt, and trial protocol, median decode
+throughput rose to 46.08 tokens/sec (+13.90%). Median prefill was 70.85
+tokens/sec. P95 decode latency was 2,760.61 ms. All 1,280 generated IDs
+matched, with a maximum first-step logit-gap error of 0.001081.
+This comparison is against the native SPARK baseline.
+[Raw trials](../benchmark/results/spark-qwen-graph-bucket.json)
+· [CUDA Graph parity](../benchmark/results/qwen-local-smoke/native-cuda-bucket-parity.jsonl)

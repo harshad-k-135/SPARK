@@ -13,5 +13,7 @@
 - Change. Compare per-operation dispatch with CUDA Graph replay using either
   one fixed extent or power-of-two attention extents. Both pass the current
   position through a device-side scalar. Prefill stays on the baseline path.
-- Status. Unit tests and a 16-token smoke check passed for both variants.
-  Full correctness and timings are pending. Graph replay is opt-in.
+- Bucket result. 46.08 median decode tokens/sec, 2,760.61 ms P95 decode
+  latency, and a 3,088,575,744-byte device arena. All 20 parity cases passed.
+  Keep the bucket variant available for this workload. The single-graph
+  comparison is still running. [Raw trials](../benchmark/results/spark-qwen-graph-bucket.json)
