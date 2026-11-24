@@ -17,3 +17,13 @@ include(CTest)
 add_library(spark_tokenizer engine/tokenizer/tokenizer.cpp)
 target_include_directories(spark_tokenizer PUBLIC ${PROJECT_SOURCE_DIR})
 target_link_libraries(spark_tokenizer PUBLIC spark_build_options)
+
+add_library(spark_model engine/model_loader/json.cpp engine/model_loader/model.cpp)
+target_link_libraries(spark_model PUBLIC spark_tokenizer)
+
+add_library(spark_cpu engine/transformer/cpu_forward.cpp engine/runtime/session.cpp)
+target_link_libraries(spark_cpu PUBLIC spark_model)
+find_package(OpenMP QUIET COMPONENTS CXX)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(spark_cpu PRIVATE OpenMP::OpenMP_CXX)
+endif()

@@ -26,3 +26,12 @@ interpreter's Unicode data. C++ applies the Llama 3 pre-tokenization rules,
 then byte BPE within each piece. Decoding concatenates original token bytes.
 The runtime supplies the model's BOS before encoding raw prompts. Model files
 and tokenizer data stay outside the source repository.
+
+## CPU execution
+
+`Session` handles one sequence and preallocates FP32 keys, values, and scratch.
+Both KV buffers are indexed [layer][KV head][position][head dimension]. Each
+query head reads its associated KV head over the causal prefix. The forward
+pass processes prefill one token at a time and evaluates the LM head only for
+the final input token. Independent projection rows can run in parallel using
+OpenMP with the same FP32 reduction order in each row.
