@@ -1,0 +1,87 @@
+[
+  {
+    "id": "short",
+    "text": "Describe how a telescope gathers light and why a larger mirror reveals fainter objects.",
+    "tokens": 16
+  },
+  {
+    "id": "arithmetic",
+    "text": "Explain how to split 84 apples equally among seven classrooms and reserve three apples per room for a second activity."
+  },
+  {
+    "id": "recipe",
+    "text": "Write a short recipe for lentil soup with carrots, garlic, and lemon. Explain when to add the lemon, and why."
+  },
+  {
+    "id": "translation",
+    "text": "Translate this notice to Spanish and then explain the tone in English: The library closes early on Friday. Please return borrowed laptops before noon."
+  },
+  {
+    "id": "french",
+    "text": "Réponds en français. Quelles sont les différences entre la météo et le climat ? Donne deux exemples faciles à comprendre."
+  },
+  {
+    "id": "hindi",
+    "text": "हिंदी में उत्तर दें। बारिश के मौसम में शहरों में पानी जमा क्यों होता है? दो व्यावहारिक उपाय बताइए।"
+  },
+  {
+    "id": "unicode",
+    "text": "Explain the labels in this dataset: naïve, café, Café́, Straße, Ⅷ, 東京, and 🌦️. Which pairs can look alike while using different bytes?"
+  },
+  {
+    "id": "code",
+    "text": "Review this C++ snippet and suggest a correction.\n\nint sum(std::vector<int> values) {\n    int result = 0;\n    for (int i = 0; i <= values.size(); ++i)\n        result += values[i];\n    return result;\n}\n"
+  },
+  {
+    "id": "whitespace",
+    "text": "Clean up the following tab-separated records and print one paragraph explaining the changes.\r\n\r\n\tid\tname\tquantity\r\n\t001\tBlack tea\t12\r\n\t002\tCoffee\t4\r\n\t003\t  Mint tea\t8\r\n  "
+  },
+  {
+    "id": "punctuation",
+    "text": "List the punctuation in these examples and explain what it does: “Wait—don't go!” / 'Twas late... / WE'RE ready?! / well-known / 00:12:3456789."
+  },
+  {
+    "id": "logic",
+    "text": "Three boxes are labeled Apples, Oranges, and Mixed. Every label is wrong. You may take one piece of fruit from one box without looking inside. Describe how to infer all labels."
+  },
+  {
+    "id": "story",
+    "text": "Continue this story in a quiet, observant voice. Mira found a brass key on the train platform, wrapped in a page from an old ferry timetable. There was a penciled circle around the last departure."
+  },
+  {
+    "id": "email",
+    "text": "Draft an email to a building manager about a leaking pipe in a shared stairwell. Mention where it is, when you noticed it, and what temporary action you took. Use a calm and direct tone."
+  },
+  {
+    "id": "data",
+    "text": "Compare these morning temperature readings and explain which day warmed most.\nMonday: 4, 8, 12, 15\nTuesday: -2, 2, 7, 13\nWednesday: 9, 10, 12, 16\nUse degrees Celsius and provide the arithmetic."
+  },
+  {
+    "id": "outline",
+    "text": "Make a short study outline for a student learning how a bill becomes law. Begin with what a bill is. Then describe committee review, debate, amendments, voting, and what can happen after a vote."
+  },
+  {
+    "id": "science",
+    "text": "Compare evaporation, condensation, and precipitation. Include a puddle that dries, droplets on a cold glass, and rain falling from a cloud. Explain which direction water moves between liquid and vapor in each example."
+  },
+  {
+    "id": "archive",
+    "text": "Summarize these archive notes and suggest two questions for further research.\n\nThe town archive received another set of notebooks on Monday. The early pages track the repair of a flood gate and name the volunteers who worked on it. Later pages compare daily water levels with records from the railway depot. The final pages describe a disagreement about whether the downstream bridge should close during storms.",
+    "tokens": 128
+  },
+  {
+    "id": "field",
+    "text": "Identify recurring observations in this field log. Explain which are measurements and which are interpretations.\n\nWe began the survey at the north end of the marsh, beside a weathered post. The water was shallow and clear. Small birds landed on the nearby reeds, then flew inland whenever the wind rose. At midday we measured the water again and found it slightly warmer. A second team checked the marker before returning to the station.",
+    "tokens": 384
+  },
+  {
+    "id": "inventory",
+    "text": "Make a checklist of the inventory procedure and identify the decisions that require a supervisor.\n\nThe storeroom has a narrow door facing the courtyard. Begin at the lowest shelf and count sealed containers before opening any boxes. Match each label against the inventory sheet. If a label is damaged, flag the entry and set the container aside. Repeat the count with a second person, then record the date and return the sheet to the desk.",
+    "tokens": 768
+  },
+  {
+    "id": "long",
+    "text": "Summarize the primary source below and identify any unresolved questions about the observatory.\n\nThe observatory log records a clear evening and a steady breeze from the west. The team set up the small telescope before sunset and checked the alignment against a distant radio tower. After dark a low cloud crossed the southern horizon. The team recorded the time, compared observations in pairs, and stored the notes in a dry cabinet near the entrance.",
+    "tokens": 1500
+  }
+]
