@@ -30,4 +30,18 @@ Generation defaults to greedy sampling and a context of 2,048 tokens.
 `--temperature`, `--top-p`, and `--seed` configure sampling. The CPU
 implementation expands approximately 3 GB of FP32 weights in host RAM.
 
+## Reproduce CPU correctness checks
+
+Run the check against the same weights dequantized to FP32 by the external
+reference. Use the b10159 Windows comparison binaries and Node.js. Omit
+`-Full` for the three-prompt smoke test. The full test evaluates 20 prompts
+and 64 greedy tokens per prompt.
+
+```powershell
+powershell -File scripts\verify_qwen_cpu.ps1 -Model 'PATH\TO\Qwen.gguf' -ReferenceBin 'PATH\TO\llama-b10159-bin-win-cuda-13.3-x64' -Full
+```
+
+Results are written under `build/qwen-reference`. The CPU model and tests
+use the original GGUF. The expanded comparison GGUF is a local build artifact.
+
 See [gate results](docs/RESULTS.md) and the [model layout](docs/DESIGN.md).
