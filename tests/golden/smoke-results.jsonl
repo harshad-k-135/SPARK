@@ -1,0 +1,5 @@
+{"event":"reference_case","id":"spaces","prompt_tokens":4,"max_logit_abs_error":3.78087e-7,"first_mismatch_step":null}
+{"event":"reference_case","id":"utf8","prompt_tokens":7,"max_logit_abs_error":2.23253e-7,"first_mismatch_step":null}
+{"event":"reference_case","id":"special","prompt_tokens":4,"max_logit_abs_error":2.46624e-7,"first_mismatch_step":null}
+{"event":"cpu_smoke","passed":true,"prompts":3,"matched_first_tokens":3,"matched_sequences":3,"matched_tokens":24,"expected_tokens":24,"max_logit_abs_error":3.78087e-7}
+{"event":"cli_smoke","greedy_bytes":true,"seed_repeatability":true,"context_rejection":true}

@@ -19,3 +19,9 @@ bytes. `cudaMemGetInfo` returned 5,409,603,584 bytes free and 6,441,926,656
 bytes total in the same process. Repeat with `powershell -File scripts/check_cuda.ps1`.
 CUDA 12.8 was already installed. The older `CUDA_HOME` value refers to 11.8,
 so the probe uses `CUDA_PATH` for the 12.8 DLL.
+
+The CPU build was verified with MinGW GCC and the local Python 3.12.9
+interpreter. CMake, clang-format, and clang-tidy were unavailable on PATH.
+Direct connections from the shell to Hugging Face and PyPI failed, and the
+local Hugging Face cache did not contain the pinned model. The local
+interpreters checked also lacked the PyTorch and Transformers reference stack.
