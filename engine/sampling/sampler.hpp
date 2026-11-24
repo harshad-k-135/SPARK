@@ -1,10 +1,13 @@
 #pragma once
 
-#include "engine/tokenizer/tokenizer.hpp"
-
+#include <cstdint>
 #include <random>
+#include <span>
+#include <vector>
 
 namespace spark {
+
+using TokenId = std::uint32_t;
 
 struct SamplingOptions {
     double temperature = 0.0;

@@ -1,11 +1,8 @@
-#include "engine/runtime/session.hpp"
+#include "engine/model_loader/gguf.hpp"
 
-#include <charconv>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <iterator>
 #include <stdexcept>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -13,114 +10,92 @@
 #endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <fcntl.h>
-#include <io.h>
 #include <cwchar>
 #endif
 
 namespace {
 
-constexpr auto usage =
-    "Usage: spark generate --model DIR (--prompt TEXT | --prompt-file PATH) "
-    "[--max-new-tokens N] [--temperature T] [--top-p P] [--seed N] [--context N]\n";
+constexpr auto usage = "Usage: spark inspect --model FILE.gguf [--tensors]\n";
 
-struct Options {
-    std::filesystem::path model;
-    std::string prompt;
-    bool prompt_set = false;
-    std::size_t context = 2048;
-    std::size_t new_tokens = 64;
-    spark::SamplingOptions sampling;
-};
-
-std::filesystem::path utf8_path(std::string_view value) {
-    return std::filesystem::path(std::u8string(value.begin(), value.end()));
-}
-
-template <typename T>
-T number(std::string_view value, std::string_view option) {
-    T result{};
-    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), result);
-    if (error != std::errc{} || end != value.data() + value.size()) {
-        throw std::invalid_argument("invalid value for " + std::string(option));
+void inspect(const std::filesystem::path& path, bool list_tensors) {
+    const spark::Gguf model(path);
+    const auto& architecture = std::get<std::string>(model.metadata("general.architecture"));
+    if (architecture != "qwen35") {
+        throw std::runtime_error("expected a Qwen3.5 text GGUF (qwen35), found " + architecture);
     }
-    return result;
-}
-
-Options parse(std::span<const std::string> args) {
-    if (args.empty() || args.front() != "generate") {
-        throw std::invalid_argument(usage);
+    const auto layers = std::get<std::uint64_t>(model.metadata("qwen35.block_count"));
+    const auto hidden = std::get<std::uint64_t>(model.metadata("qwen35.embedding_length"));
+    const auto& tokens = std::get<spark::GgufArray>(model.metadata("tokenizer.ggml.tokens"));
+    if (layers == 0 || hidden == 0 || tokens.element_type != 8 || tokens.count == 0 ||
+        model.tensors().empty()) {
+        throw std::runtime_error("incomplete Qwen3.5 GGUF model");
     }
-    Options options;
-    for (std::size_t i = 1; i < args.size(); ++i) {
-        const auto& key = args[i];
-        if (++i == args.size()) {
-            throw std::invalid_argument("missing value for " + key);
+
+    std::uint64_t recurrent = 0;
+    std::uint64_t attention = 0;
+    std::uint64_t auxiliary = 0;
+    const auto& tensors = model.tensors();
+    for (std::uint64_t layer = 0; layer < layers; ++layer) {
+        const auto prefix = "blk." + std::to_string(layer) + ".";
+        const bool has_recurrent = tensors.contains(prefix + "ssm_a");
+        const bool has_attention = tensors.contains(prefix + "attn_q.weight");
+        if (has_recurrent == has_attention) {
+            throw std::runtime_error("invalid Qwen3.5 layer type in " + prefix);
         }
-        const auto& value = args[i];
-        if (key == "--model") {
-            options.model = utf8_path(value);
-        } else if (key == "--prompt" || key == "--prompt-file") {
-            if (options.prompt_set) {
-                throw std::invalid_argument("provide exactly one prompt");
-            }
-            options.prompt_set = true;
-            if (key == "--prompt") {
-                options.prompt = value;
-            } else {
-                std::ifstream input(utf8_path(value), std::ios::binary);
-                if (!input) {
-                    throw std::runtime_error("could not open prompt file");
-                }
-                options.prompt.assign(std::istreambuf_iterator<char>(input), {});
-            }
-        } else if (key == "--max-new-tokens") {
-            options.new_tokens = number<std::size_t>(value, key);
-        } else if (key == "--context") {
-            options.context = number<std::size_t>(value, key);
-        } else if (key == "--temperature") {
-            options.sampling.temperature = number<double>(value, key);
-        } else if (key == "--top-p") {
-            options.sampling.top_p = number<double>(value, key);
-        } else if (key == "--seed") {
-            options.sampling.seed = number<std::uint64_t>(value, key);
+        if (tensors.contains(prefix + "nextn.eh_proj.weight")) {
+            ++auxiliary;
+        } else if (has_recurrent) {
+            ++recurrent;
         } else {
-            throw std::invalid_argument("unknown option " + key);
+            ++attention;
         }
     }
-    if (options.model.empty() || !options.prompt_set) {
-        throw std::invalid_argument(usage);
+
+    std::map<std::string_view, std::size_t> counts;
+    for (const auto& [name, tensor] : model.tensors()) {
+        ++counts[spark::gguf_type_name(tensor.type)];
+        if (list_tensors) {
+            std::cout << name << '\t' << spark::gguf_type_name(tensor.type) << '\t';
+            for (std::uint32_t i = 0; i < tensor.rank; ++i) {
+                if (i > 0) std::cout << 'x';
+                std::cout << tensor.shape[i];
+            }
+            std::cout << "\toffset=" << tensor.file_offset << "\tbytes=" << tensor.bytes << '\n';
+        }
     }
-    return options;
+    std::cout << "architecture=" << architecture << "\ngguf_version=" << model.version()
+              << "\nfile_blocks=" << layers << "\nrecurrent_layers=" << recurrent
+              << "\nattention_layers=" << attention << "\nauxiliary_blocks=" << auxiliary
+              << "\nhidden=" << hidden << "\nvocabulary=" << tokens.count
+              << "\ntensors=" << model.tensors().size() << "\nfile_bytes=" << model.size() << '\n';
+    for (const auto& [type, count] : counts) {
+        std::cout << "tensors." << type << '=' << count << '\n';
+    }
 }
 
-int run(std::span<const std::string> args) {
-    if (args.size() == 1 && args.front() == "--help") {
+int run(const std::vector<std::string>& args) {
+    if (args.empty() || (args.size() == 1 && args[0] == "--help")) {
         std::cout << usage;
         return 0;
     }
-    const auto options = parse(args);
-    const spark::Tokenizer tokenizer(options.model / "tokenizer.bin");
-    const spark::Model model(options.model);
-    if (tokenizer.vocab_size() != model.config().vocab) {
-        throw std::runtime_error("model and tokenizer vocabulary sizes differ");
+    if (args[0] == "generate") {
+        throw std::runtime_error("native Qwen3.5 generation is pending CPU forward-pass parity");
     }
-    auto prompt = tokenizer.encode(options.prompt);
-    prompt.insert(prompt.begin(), model.config().bos);
-    spark::Session session(model, options.context);
-    const auto tokens = session.generate(prompt, options.new_tokens, options.sampling);
-    std::cout << tokenizer.decode(tokens, true) << '\n';
+    if ((args.size() != 3 && args.size() != 4) || args[0] != "inspect" || args[1] != "--model" ||
+        (args.size() == 4 && args[3] != "--tensors")) {
+        throw std::invalid_argument(usage);
+    }
+    const auto path = std::filesystem::path(std::u8string(args[2].begin(), args[2].end()));
+    inspect(path, args.size() == 4);
     return 0;
 }
 
 #ifdef _WIN32
 std::string argument(const wchar_t* text) {
     const auto length = static_cast<int>(std::wcslen(text));
-    if (length == 0) {
-        return {};
-    }
+    if (length == 0) return {};
     const auto bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, length,
-                                            nullptr, 0, nullptr, nullptr);
+                                           nullptr, 0, nullptr, nullptr);
     if (bytes == 0) {
         throw std::invalid_argument("argument could not be converted to UTF-8");
     }
@@ -143,11 +118,6 @@ int wmain(int argc, wchar_t** argv) {
 int main(int argc, char** argv) {
 #endif
     try {
-#ifdef _WIN32
-        if (_setmode(_fileno(stdout), _O_BINARY) == -1) {
-            throw std::runtime_error("could not configure UTF-8 byte output");
-        }
-#endif
         std::vector<std::string> args;
         for (int i = 1; i < argc; ++i) {
             args.push_back(argument(argv[i]));
