@@ -8,7 +8,7 @@
 | Qwen tokenizer smoke | Passed | Eight prompts matched the external reference token for token and round-tripped byte for byte. [Raw output](../benchmark/results/qwen-local-smoke/native-tokenizer.jsonl) |
 | Gated DeltaNet recurrence | Passed | A two-step CPU test checked state decay, the delta update, and query readout against hand-computed values. |
 | Native Qwen CPU generation | Smoke passed | Native output matched the independent FP32 comparison on 3/3 prompts and 33/33 generated IDs. |
-| 1 — Qwen CPU parity | Passed | All 20 greedy continuations matched for 64 tokens each. Matched-FP32 logit verification is tracked separately. |
+| 1 — Qwen CPU parity | Passed | All 20 first tokens and 1,280 greedy continuation IDs matched. Maximum first-step logit-gap error with FP32 KV on both sides was 0.001041. |
 | Native Qwen CUDA generation | Smoke passed | CUDA generated `4` on the RTX 3050 from the supplied GGUF. The arena used 3,088,575,744 bytes at 2,048 context. Fixed-seed CUDA operation tests passed. |
 | 2 — Qwen CUDA parity and baseline | In verification | Full prompt suite and baseline measurements pending. |
 | 3 — Optimized Qwen decode | Pending Gate 2 | |
@@ -45,3 +45,7 @@ when the external comparison used FP16 KV. Repeating the 768-token reference
 with FP32 K and V and flash attention disabled reduced that difference from
 0.125093 to 0.000602 using the same native logits.
 [Initial full-run output](../benchmark/results/qwen-local-smoke/native-generation-fp16-kv-reference.jsonl)
+
+With FP32 K and V on both sides, all 20 continuations again matched and the
+maximum first-step logit-gap error was 0.001041 over 248,320 logits per prompt.
+[Matched-precision full-run output](../benchmark/results/qwen-local-smoke/native-generation-fp32-kv-reference.jsonl)
