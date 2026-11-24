@@ -6,15 +6,7 @@
 #include <stdexcept>
 
 namespace spark {
-namespace {
-
-struct Encoding {
-    std::string_view name;
-    std::uint64_t elements;
-    std::uint64_t bytes;
-};
-
-Encoding encoding(std::uint32_t type) {
+GgufEncoding gguf_encoding(std::uint32_t type) {
     switch (type) {
         case 0: return {"F32", 1, 4};
         case 1: return {"F16", 1, 2};
@@ -27,6 +19,8 @@ Encoding encoding(std::uint32_t type) {
         default: throw std::runtime_error("unsupported GGUF tensor type " + std::to_string(type));
     }
 }
+
+namespace {
 
 std::uint64_t multiply(std::uint64_t a, std::uint64_t b) {
     if (b != 0 && a > std::numeric_limits<std::uint64_t>::max() / b) {
@@ -186,7 +180,7 @@ Gguf::Gguf(const std::filesystem::path& path) : size_(std::filesystem::file_size
         }
         tensor.type = reader.number<std::uint32_t>();
         tensor.file_offset = reader.number<std::uint64_t>();
-        const auto storage = encoding(tensor.type);
+        const auto storage = gguf_encoding(tensor.type);
         if (tensor.file_offset % alignment != 0 || tensor.shape[0] % storage.elements != 0) {
             throw std::runtime_error("unaligned GGUF tensor in " + name);
         }
@@ -227,7 +221,5 @@ const GgufValue& Gguf::metadata(std::string_view key) const {
     }
     return entry->second;
 }
-
-std::string_view gguf_type_name(std::uint32_t type) { return encoding(type).name; }
 
 }  // namespace spark

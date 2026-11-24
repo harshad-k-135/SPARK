@@ -1,6 +1,9 @@
 #include "engine/model_loader/gguf.hpp"
+#include "engine/model_loader/packed_weights.hpp"
 
 #include <iostream>
+#include <cmath>
+#include <algorithm>
 #include <stdexcept>
 #include <vector>
 
@@ -53,9 +56,9 @@ void inspect(const std::filesystem::path& path, bool list_tensors) {
 
     std::map<std::string_view, std::size_t> counts;
     for (const auto& [name, tensor] : model.tensors()) {
-        ++counts[spark::gguf_type_name(tensor.type)];
+        ++counts[spark::gguf_encoding(tensor.type).name];
         if (list_tensors) {
-            std::cout << name << '\t' << spark::gguf_type_name(tensor.type) << '\t';
+            std::cout << name << '\t' << spark::gguf_encoding(tensor.type).name << '\t';
             for (std::uint32_t i = 0; i < tensor.rank; ++i) {
                 if (i > 0) std::cout << 'x';
                 std::cout << tensor.shape[i];
@@ -71,6 +74,17 @@ void inspect(const std::filesystem::path& path, bool list_tensors) {
     for (const auto& [type, count] : counts) {
         std::cout << "tensors." << type << '=' << count << '\n';
     }
+    const auto& embedding = tensors.at("token_embd.weight");
+    if (embedding.rank != 2 || embedding.shape[0] != hidden || embedding.shape[1] != tokens.count) {
+        throw std::runtime_error("Qwen3.5 embedding dimensions disagree with metadata");
+    }
+    std::vector<float> sample(hidden);
+    spark::read_gguf_row(path, embedding, 0, sample);
+    if (!std::ranges::all_of(sample, [](float value) { return std::isfinite(value); })) {
+        throw std::runtime_error("non-finite values in the first embedding row");
+    }
+    const auto [lowest, highest] = std::ranges::minmax(sample);
+    std::cout << "embedding_row_0_range=" << lowest << ',' << highest << '\n';
 }
 
 int run(const std::vector<std::string>& args) {

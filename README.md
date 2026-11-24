@@ -15,7 +15,10 @@ powershell -File scripts/build_cpu.ps1
 ```
 
 Add `--tensors` to list each tensor's shape, format, byte offset, and size.
+The inspector also decodes the first embedding row to verify weight access.
 With CMake, run `cmake --preset release` and `cmake --build --preset release`.
 Use the executable under `build/release` or `build/release/Release`.
+Run `ctest --preset release` or `build/cpu/spark_packed_weights_test.exe` to
+check packed weight decoding.
 
 See [gate results](docs/RESULTS.md) and the [model layout](docs/DESIGN.md).

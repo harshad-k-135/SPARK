@@ -43,6 +43,12 @@ private:
     std::uint32_t version_ = 0;
 };
 
-[[nodiscard]] std::string_view gguf_type_name(std::uint32_t type);
+struct GgufEncoding {
+    std::string_view name;
+    std::size_t elements;
+    std::size_t bytes;
+};
+
+[[nodiscard]] GgufEncoding gguf_encoding(std::uint32_t type);
 
 }  // namespace spark
