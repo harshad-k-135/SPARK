@@ -9,6 +9,7 @@ import mmap
 import re
 import struct
 import sys
+import tempfile
 from pathlib import Path
 
 MODEL_ID = "meta-llama/Llama-3.2-1B-Instruct"
@@ -135,18 +136,24 @@ def main():
     if args.source.parent.name == "snapshots" and args.source.name != args.revision:
         parser.error("source snapshot directory disagrees with the specified revision")
     config = read_config(args.source)
-    args.output.mkdir(parents=True, exist_ok=False)
-    tensors = write_weights(args.source, args.output, config)
-    manifest = {
-        "format": "spark-f32-v1",
-        "model_id": args.model_id,
-        "revision": args.revision,
-        "config": config,
-        "tensors": tensors,
-    }
-    (args.output / "manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8",
-    )
+    if args.output.exists():
+        parser.error("output model directory already exists")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".spark-export-", dir=args.output.parent) as temporary:
+        staging = Path(temporary) / "model"
+        staging.mkdir()
+        tensors = write_weights(args.source, staging, config)
+        manifest = {
+            "format": "spark-f32-v1",
+            "model_id": args.model_id,
+            "revision": args.revision,
+            "config": config,
+            "tensors": tensors,
+        }
+        (staging / "manifest.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8",
+        )
+        staging.rename(args.output)
 
 
 if __name__ == "__main__":

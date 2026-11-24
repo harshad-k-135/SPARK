@@ -4,6 +4,7 @@
 import argparse
 import json
 import re
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,10 +18,10 @@ def fixture_prompt(case, tokenizer):
     ids = tokenizer.encode(text, add_special_tokens=True)
     target = case.get("tokens")
     if target is not None:
-        if len(ids) < target:
-            # Each repeated paragraph ends with punctuation and starts on a new line.
-            paragraph = text.rsplit("\n\n", 1)[-1]
-            text += ("\n\n" + paragraph) * (target // max(1, len(ids) // 2) + 2)
+        # Each repeated paragraph ends with punctuation and starts on a new line.
+        paragraph = text.rsplit("\n\n", 1)[-1]
+        while len(ids) < target:
+            text += "\n\n" + paragraph
             ids = tokenizer.encode(text, add_special_tokens=True)
         ids = ids[:target]
         text = tokenizer.decode(ids[1:], clean_up_tokenization_spaces=False)
@@ -47,6 +48,8 @@ def main():
         parser.error("revision must be a full 40-character commit hash")
     if args.source.parent.name == "snapshots" and args.source.name != args.revision:
         parser.error("source snapshot directory disagrees with the specified revision")
+    if not (args.source / "config.json").is_file() or not any(args.source.glob("*.safetensors")):
+        parser.error("the local snapshot must contain config.json and safetensors weights")
 
     import torch
     import transformers
@@ -87,12 +90,16 @@ def main():
         "dtype": "float32", "torch": torch.__version__, "torch_threads": torch.get_num_threads(),
         "transformers": transformers.__version__, "cases": results,
     }
-    pending = args.output.with_suffix(args.output.suffix + ".tmp")
-    pending.write_text(
-        json.dumps(output, separators=(",", ":"), ensure_ascii=False, allow_nan=False) + "\n",
-        encoding="utf-8",
+    config = model.config
+    output["fp16_kv_bytes_per_token"] = (
+        2 * config.num_hidden_layers * config.num_key_value_heads * config.head_dim * 2
     )
-    pending.replace(args.output)
+    with tempfile.TemporaryDirectory(prefix=".spark-reference-", dir=args.output.parent) as temporary:
+        pending = Path(temporary) / "reference.json"
+        with pending.open("w", encoding="utf-8", newline="\n") as file:
+            json.dump(output, file, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+            file.write("\n")
+        pending.replace(args.output)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import argparse
 import itertools
 import json
 import struct
+import tempfile
 import unicodedata
 from pathlib import Path
 
@@ -95,7 +96,10 @@ def main():
     parser.add_argument("--source", type=Path, required=True, help="local HF snapshot")
     parser.add_argument("--output", type=Path, required=True, help="existing SPARK model directory")
     args = parser.parse_args()
-    export_tokenizer(args.source, args.output / "tokenizer.bin")
+    with tempfile.TemporaryDirectory(prefix=".spark-tokenizer-", dir=args.output) as temporary:
+        table = Path(temporary) / "tokenizer.bin"
+        export_tokenizer(args.source, table)
+        table.replace(args.output / table.name)
 
 
 if __name__ == "__main__":
