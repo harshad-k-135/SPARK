@@ -7,7 +7,8 @@
 | Packed weight decoding | Passed | Fixed FP32, FP16, BF16, Q4_K, Q5_K, Q6_K, and Q8_0 cases passed. The native inspector read and decoded the first real embedding row. |
 | Qwen tokenizer smoke | Passed | Eight prompts matched the external reference token for token and round-tripped byte for byte. [Raw output](../benchmark/results/qwen-local-smoke/native-tokenizer.jsonl) |
 | Gated DeltaNet recurrence | Passed | A two-step CPU test checked state decay, the delta update, and query readout against hand-computed values. |
-| 1 — Qwen CPU parity | Pending | Requires the text forward pass and 20 × 64 reference continuations. |
+| Native Qwen CPU generation | Smoke passed | Native output matched the independent FP32 comparison on 3/3 prompts and 33/33 generated IDs. |
+| 1 — Qwen CPU parity | Pending | The 20-prompt, 64-token suite remains outstanding. |
 | 2 — Qwen CUDA parity and baseline | Pending Gate 1 | |
 | 3 — Optimized Qwen decode | Pending Gate 2 | |
 | 4 — GPU comparison and control API | Pending Gate 3 | |
@@ -26,3 +27,10 @@ ran on CPU. GPU inference, live SPARK frontend captures, and matched performance
 comparisons are pending.
 
 [Sandbox verification chart](../benchmark/results/qwen-local-smoke/native-qwen-coverage.svg)
+
+The native CPU smoke used the supplied GGUF as SPARK's input. The external
+reference used a separate FP32 GGUF created from the same packed weights with
+`llama-quantize --allow-requantize --pure ... F32 6` at b10159. Each runtime
+received identical prompt IDs. The maximum first-step logit-gap difference
+over the reference's top eight tokens was 0.004061. The packed CPU reference
+diverged on the multilingual prompt and had a higher first-step error.

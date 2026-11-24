@@ -1,10 +1,14 @@
 #include "engine/model_loader/gguf.hpp"
 #include "engine/model_loader/packed_weights.hpp"
 #include "engine/tokenizer/tokenizer.hpp"
+#include "engine/transformer/cpu_model.hpp"
 
 #include <iostream>
 #include <cmath>
 #include <algorithm>
+#include <charconv>
+#include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -21,7 +25,133 @@ namespace {
 
 constexpr auto usage =
     "Usage: spark inspect --model FILE.gguf [--tensors]\n"
-    "       spark tokenize --model FILE.gguf --prompt TEXT [--special]\n";
+    "       spark tokenize --model FILE.gguf --prompt TEXT [--special]\n"
+    "       spark generate --model FILE.gguf (--prompt TEXT [--chat] | --prompt-ids IDS)\n"
+    "              [--max-new-tokens N] [--context N] [--temperature T] [--top-p P] [--seed N]\n"
+    "              [--ignore-eos] [--ids] [--first-logits PATH]\n";
+
+template <typename T>
+void parse_number(std::string_view value, T& result, std::string_view option) {
+    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), result);
+    if (error != std::errc{} || end != value.data() + value.size())
+        throw std::invalid_argument("invalid value for " + std::string(option));
+}
+
+std::vector<spark::TokenId> parse_ids(std::string_view input) {
+    std::vector<spark::TokenId> result;
+    while (!input.empty()) {
+        const auto delimiter = input.find(',');
+        const auto item = input.substr(0, delimiter);
+        spark::TokenId id{};
+        const auto [end, error] = std::from_chars(item.data(), item.data() + item.size(), id);
+        if (error != std::errc{} || end != item.data() + item.size() ||
+            (delimiter != std::string_view::npos && delimiter + 1 == input.size()))
+            throw std::invalid_argument("expected comma-separated prompt token IDs");
+        result.push_back(id);
+        if (delimiter == std::string_view::npos) break;
+        input.remove_prefix(delimiter + 1);
+    }
+    return result;
+}
+
+void print_ids(std::span<const spark::TokenId> ids) {
+    std::cout << '[';
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        if (i > 0) std::cout << ',';
+        std::cout << ids[i];
+    }
+    std::cout << "]\n";
+}
+
+void generate(const std::vector<std::string>& args) {
+    if (args.size() < 5 || args[1] != "--model" ||
+        (args[3] != "--prompt" && args[3] != "--prompt-ids"))
+        throw std::invalid_argument(usage);
+    bool chat = false, ids_only = false, ignore_eos = false;
+    std::filesystem::path logits_path;
+    std::size_t count = 64;
+    std::size_t context = 2048;
+    spark::SamplingOptions sampling;
+    for (std::size_t i = 5; i < args.size(); ++i) {
+        if (args[i] == "--chat") chat = true;
+        else if (args[i] == "--ids") ids_only = true;
+        else if (args[i] == "--ignore-eos") ignore_eos = true;
+        else if (args[i] == "--first-logits" && i + 1 < args.size()) {
+            const auto& value = args[++i];
+            logits_path = std::filesystem::path(std::u8string(value.begin(), value.end()));
+        } else if (args[i] == "--max-new-tokens" && i + 1 < args.size()) {
+            parse_number(args[i + 1], count, args[i]);
+            ++i;
+        } else if (args[i] == "--context" && i + 1 < args.size()) {
+            parse_number(args[i + 1], context, args[i]);
+            ++i;
+        } else if (args[i] == "--temperature" && i + 1 < args.size()) {
+            parse_number(args[i + 1], sampling.temperature, args[i]);
+            ++i;
+        } else if (args[i] == "--top-p" && i + 1 < args.size()) {
+            parse_number(args[i + 1], sampling.top_p, args[i]);
+            ++i;
+        } else if (args[i] == "--seed" && i + 1 < args.size()) {
+            parse_number(args[i + 1], sampling.seed, args[i]);
+            ++i;
+        } else throw std::invalid_argument(usage);
+    }
+    if (context == 0 || context > 4096 || count == 0 || count > context)
+        throw std::invalid_argument("requested token count or context is outside the supported range");
+    if (ignore_eos && sampling.temperature != 0)
+        throw std::invalid_argument("--ignore-eos requires greedy sampling");
+    const auto path = std::filesystem::path(std::u8string(args[2].begin(), args[2].end()));
+    const spark::Gguf model(path);
+    const spark::Tokenizer tokenizer(model);
+    const bool use_ids = args[3] == "--prompt-ids";
+    if (use_ids && chat) throw std::invalid_argument("--chat requires a text prompt");
+    auto input = use_ids ? parse_ids(args[4]) : tokenizer.encode(args[4]);
+    if (chat) {
+        auto prefix = tokenizer.encode("<|im_start|>user\n", true);
+        const auto suffix = tokenizer.encode("<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n", true);
+        prefix.insert(prefix.end(), input.begin(), input.end());
+        prefix.insert(prefix.end(), suffix.begin(), suffix.end());
+        input = std::move(prefix);
+    }
+    if (input.empty() || input.size() > context - count)
+        throw std::invalid_argument("prompt and output exceed the context or prompt is empty");
+    const auto eos = std::get<std::uint64_t>(model.metadata("tokenizer.ggml.eos_token_id"));
+    const auto end_of_text = tokenizer.encode("<|endoftext|>", true);
+    spark::CpuModel session(model, path, context);
+    std::span<const float> logits;
+    for (std::size_t i = 0; i < input.size(); ++i)
+        logits = session.step(input[i], i + 1 == input.size());
+    if (!logits_path.empty()) {
+        std::ofstream file(logits_path, std::ios::binary);
+        if (!file.write(reinterpret_cast<const char*>(logits.data()),
+                        static_cast<std::streamsize>(logits.size_bytes())))
+            throw std::runtime_error("could not write first-step logits");
+    }
+    const auto is_eos = [&](spark::TokenId token) {
+        return token == eos || (end_of_text.size() == 1 && token == end_of_text.front());
+    };
+    spark::Sampler sampler(logits.size(), sampling);
+    std::vector<spark::TokenId> output;
+    output.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        auto token = sampler.sample(logits);
+        if (is_eos(token)) {
+            if (!ignore_eos) break;
+            auto best = -std::numeric_limits<float>::infinity();
+            for (std::size_t j = 0; j < logits.size(); ++j) {
+                const auto candidate = static_cast<spark::TokenId>(j);
+                if (!is_eos(candidate) && logits[j] > best) {
+                    best = logits[j];
+                    token = candidate;
+                }
+            }
+        }
+        output.push_back(token);
+        if (!ids_only) std::cout << tokenizer.decode(std::span(&token, 1), true) << std::flush;
+        if (i + 1 < count) logits = session.step(token, true);
+    }
+    if (ids_only) print_ids(output); else std::cout << '\n';
+}
 
 void inspect(const std::filesystem::path& path, bool list_tensors) {
     const spark::Gguf model(path);
@@ -96,7 +226,8 @@ int run(const std::vector<std::string>& args) {
         return 0;
     }
     if (args[0] == "generate") {
-        throw std::runtime_error("native Qwen3.5 generation is pending CPU forward-pass parity");
+        generate(args);
+        return 0;
     }
     if ((args.size() == 5 || args.size() == 6) && args[0] == "tokenize" && args[1] == "--model" &&
         args[3] == "--prompt" && (args.size() == 5 || args[5] == "--special")) {
@@ -107,12 +238,7 @@ int run(const std::vector<std::string>& args) {
         if (tokenizer.decode(ids) != args[4]) {
             throw std::runtime_error("Qwen3.5 tokenizer round-trip changed the prompt bytes");
         }
-        std::cout << '[';
-        for (std::size_t i = 0; i < ids.size(); ++i) {
-            if (i > 0) std::cout << ',';
-            std::cout << ids[i];
-        }
-        std::cout << "]\n";
+        print_ids(ids);
         return 0;
     }
     if ((args.size() != 3 && args.size() != 4) || args[0] != "inspect" || args[1] != "--model" ||
