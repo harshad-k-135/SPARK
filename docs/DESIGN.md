@@ -16,3 +16,13 @@ With the actual model configuration, SPARK derives the KV footprint as
 `2 * layers * kv_heads * head_dim * context * bytes_per_element`. The two
 buffers are keys and values. The calculation uses the KV heads and head
 dimension from the model export.
+
+## Tokenization
+
+Export `tokenizer.json` with `tools/export/export_tokenizer.py`. The binary
+table contains byte strings indexed by token ID, listed added special tokens,
+ranked BPE merges, and Unicode character-class ranges derived from the export
+interpreter's Unicode data. C++ applies the Llama 3 pre-tokenization rules,
+then byte BPE within each piece. Decoding concatenates original token bytes.
+The runtime supplies the model's BOS before encoding raw prompts. Model files
+and tokenizer data stay outside the source repository.

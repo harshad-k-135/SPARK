@@ -13,3 +13,7 @@ else()
     target_compile_options(spark_build_options INTERFACE $<$<CONFIG:Release>:-O3>)
 endif()
 include(CTest)
+
+add_library(spark_tokenizer engine/tokenizer/tokenizer.cpp)
+target_include_directories(spark_tokenizer PUBLIC ${PROJECT_SOURCE_DIR})
+target_link_libraries(spark_tokenizer PUBLIC spark_build_options)
