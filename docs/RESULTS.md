@@ -93,6 +93,7 @@ Both graph measurements used the executable built from `b87af6d`.
 The single-graph raw metadata also records the later documentation-only
 checkout commit present at measurement time.
 [Single-graph raw trials](../benchmark/results/spark-qwen-graph-single.json)
+· [Native throughput chart](../benchmark/results/spark-qwen-native-throughput.svg)
 
 ## Dashboard smoke run
 

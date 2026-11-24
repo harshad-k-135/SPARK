@@ -83,6 +83,7 @@ $('stop').addEventListener('click', () => controller?.abort());
 
 function benchmarkLabel(report) {
   if (report.runtime === 'spark-qwen-graph-bucket') return 'Bucketed CUDA Graph';
+  if (report.runtime === 'spark-qwen-graph-single') return 'Single CUDA Graph';
   if (report.runtime === 'spark-qwen-v0') return 'SPARK baseline';
   return report.runtime;
 }

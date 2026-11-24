@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="350" viewBox="0 0 960 350" role="img" aria-labelledby="title">
+  <title id="title">RTX 3050 native SPARK decode throughput</title>
+  <rect width="960" height="350" fill="#f7fafc"/>
+  <g font-family="Segoe UI,sans-serif" fill="#172734">
+    <text x="34" y="49" font-size="27" font-weight="700">Native SPARK decode on the RTX 3050</text>
+    <text x="34" y="80" font-size="16">Qwen3.5 0.8B GGUF · 512 prompt tokens · 128 output tokens · 10 measured trials</text>
+    <g stroke="#d0dbe4"><path d="M238 108v148m110-148v148m110-148v148m110-148v148m110-148v148m110-148v148"/></g>
+    <rect x="238" y="119" width="445.04" height="25" rx="3" fill="#849fb5"/>
+    <rect x="238" y="165" width="506.90" height="25" rx="3" fill="#137d75"/>
+    <rect x="238" y="211" width="505.11" height="25" rx="3" fill="#1e97a2"/>
+    <g font-size="16">
+      <text x="35" y="137">SPARK baseline</text><text x="695" y="137">40.46</text>
+      <text x="35" y="183">Bucketed CUDA Graph</text><text x="757" y="183">46.08</text>
+      <text x="35" y="229">Single CUDA Graph</text><text x="755" y="229">45.92</text>
+    </g>
+    <g font-size="14" text-anchor="middle">
+      <text x="238" y="281">0</text><text x="348" y="281">10</text><text x="458" y="281">20</text>
+      <text x="568" y="281">30</text><text x="678" y="281">40</text><text x="788" y="281">50</text>
+      <text x="513" y="306">Median decode tokens/sec</text>
+    </g>
+    <text x="35" y="332" font-size="15">Bucketed replay was 13.9% faster than the native baseline. All three paths passed token parity.</text>
+  </g>
+</svg>

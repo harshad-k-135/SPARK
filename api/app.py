@@ -150,6 +150,7 @@ async def lifespan(app):
     for identifier, filename in (
         ("baseline-v0", "spark-qwen-v0.json"),
         ("graph-bucket", "spark-qwen-graph-bucket.json"),
+        ("graph-single", "spark-qwen-graph-single.json"),
     ):
         path = RESULTS / filename
         if path.is_file():
