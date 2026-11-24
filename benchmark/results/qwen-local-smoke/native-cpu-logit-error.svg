@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="420" viewBox="0 0 980 420" role="img" aria-labelledby="title description">
+  <title id="title">Native SPARK CPU smoke test logit errors</title>
+  <desc id="description">Maximum first-logit absolute error by synthetic prompt against a standalone reference. Spaces 3.78087e-7, UTF-8 2.23253e-7, special tokens 2.46624e-7.</desc>
+  <rect width="980" height="420" fill="#f7fafc"/>
+  <g font-family="Segoe UI, sans-serif" fill="#142335">
+    <text x="40" y="54" font-size="30" font-weight="700">Native SPARK CPU smoke test</text>
+    <text x="40" y="89" font-size="17">Maximum first-logit absolute error compared with the independent synthetic reference</text>
+    <g stroke="#c9d4df"><path d="M220 125v196M360 125v196M500 125v196M640 125v196M780 125v196"/></g>
+    <g font-size="17">
+      <text x="40" y="162">Spaces</text><text x="40" y="226">UTF-8</text><text x="40" y="290">Special tokens</text>
+      <rect x="220" y="139" width="529.322" height="30" rx="4" fill="#146b79"/>
+      <rect x="220" y="203" width="312.554" height="30" rx="4" fill="#146b79"/>
+      <rect x="220" y="267" width="345.274" height="30" rx="4" fill="#146b79"/>
+      <text x="762" y="160">3.78087 × 10⁻⁷</text>
+      <text x="545" y="224">2.23253 × 10⁻⁷</text>
+      <text x="578" y="288">2.46624 × 10⁻⁷</text>
+    </g>
+    <g font-size="15" text-anchor="middle">
+      <text x="220" y="346">0</text><text x="360" y="346">1</text><text x="500" y="346">2</text><text x="640" y="346">3</text><text x="780" y="346">4</text>
+      <text x="500" y="374">Absolute error (× 10⁻⁷)</text>
+    </g>
+    <text x="40" y="399" font-size="15">24/24 greedy tokens matched across the three synthetic prompts.</text>
+  </g>
+</svg>

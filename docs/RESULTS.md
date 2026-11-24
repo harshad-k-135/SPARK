@@ -52,3 +52,11 @@ CUDA 13.3 build listed zero GPU devices and its CUDA backend imports
 Native SPARK rejected the GGUF and passed its existing CPU fixture again.
 Gate 1 remains blocked pending the official Llama snapshot and reference.
 [Native evidence](../benchmark/results/qwen-local-smoke/04-spark-native.png)
+
+The sandbox rerun rebuilt the CPU executable and reproduced all three synthetic
+logit errors. The Qwen chat request again returned `4`. A separate LibreWolf
+headless capture attempt failed to map its browser framebuffer. Gate 1 still
+reports a missing reference JSON.
+
+- [Synthetic first-logit error comparison](../benchmark/results/qwen-local-smoke/native-cpu-logit-error.svg)
+- [Coverage across the available execution paths](../benchmark/results/qwen-local-smoke/sandbox-test-coverage.svg)
