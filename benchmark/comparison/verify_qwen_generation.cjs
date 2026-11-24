@@ -52,6 +52,7 @@ async function main() {
             lengths.push(promptTokens.length);
             const nativeArgs = ['generate', '--model', model, '--prompt-ids', promptTokens.join(','),
                 '--max-new-tokens', String(count), '--ids', '--first-logits', logitsFile];
+            if (process.env.SPARK_DEVICE) nativeArgs.push('--device', process.env.SPARK_DEVICE);
             if (full) nativeArgs.push('--ignore-eos');
             const request = { prompt: promptTokens, temperature: 0, n_predict: count,
                 return_tokens: true, cache_prompt: false, ignore_eos: full, n_probs: full ? 0 : 8 };
@@ -85,7 +86,8 @@ async function main() {
                 reference_ids: referenceIds, sequence_match: match,
                 first_token_match: ids[0] === referenceIds[0], logits_compared: scores.length,
                 max_logit_gap_error: error }));
-            if (!match || !Number.isFinite(error)) process.exitCode = 1;
+            if (!match || !Number.isFinite(error) ||
+                (full && process.env.SPARK_DEVICE === 'cuda' && error >= 0.05)) process.exitCode = 1;
         }
     } finally {
         await rm(logitsFile, { force: true });

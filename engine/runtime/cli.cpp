@@ -2,6 +2,9 @@
 #include "engine/model_loader/packed_weights.hpp"
 #include "engine/tokenizer/tokenizer.hpp"
 #include "engine/transformer/cpu_model.hpp"
+#ifdef SPARK_WITH_CUDA
+#include "cuda/qwen_gpu.hpp"
+#endif
 
 #include <iostream>
 #include <cmath>
@@ -27,8 +30,9 @@ constexpr auto usage =
     "Usage: spark inspect --model FILE.gguf [--tensors]\n"
     "       spark tokenize --model FILE.gguf --prompt TEXT [--special]\n"
     "       spark generate --model FILE.gguf (--prompt TEXT [--chat] | --prompt-ids IDS)\n"
-    "              [--max-new-tokens N] [--context N] [--temperature T] [--top-p P] [--seed N]\n"
-    "              [--ignore-eos] [--ids] [--first-logits PATH]\n";
+    "              [--device cpu|cuda] [--max-new-tokens N] [--context N] [--temperature T]\n"
+    "              [--top-p P] [--seed N]\n"
+    "              [--ignore-eos] [--ids] [--first-logits PATH] [--profile]\n";
 
 template <typename T>
 void parse_number(std::string_view value, T& result, std::string_view option) {
@@ -67,7 +71,8 @@ void generate(const std::vector<std::string>& args) {
     if (args.size() < 5 || args[1] != "--model" ||
         (args[3] != "--prompt" && args[3] != "--prompt-ids"))
         throw std::invalid_argument(usage);
-    bool chat = false, ids_only = false, ignore_eos = false;
+    bool chat = false, ids_only = false, ignore_eos = false, profile = false;
+    std::string_view device = "cpu";
     std::filesystem::path logits_path;
     std::size_t count = 64;
     std::size_t context = 2048;
@@ -76,6 +81,8 @@ void generate(const std::vector<std::string>& args) {
         if (args[i] == "--chat") chat = true;
         else if (args[i] == "--ids") ids_only = true;
         else if (args[i] == "--ignore-eos") ignore_eos = true;
+        else if (args[i] == "--profile") profile = true;
+        else if (args[i] == "--device" && i + 1 < args.size()) device = args[++i];
         else if (args[i] == "--first-logits" && i + 1 < args.size()) {
             const auto& value = args[++i];
             logits_path = std::filesystem::path(std::u8string(value.begin(), value.end()));
@@ -100,6 +107,10 @@ void generate(const std::vector<std::string>& args) {
         throw std::invalid_argument("requested token count or context is outside the supported range");
     if (ignore_eos && sampling.temperature != 0)
         throw std::invalid_argument("--ignore-eos requires greedy sampling");
+    if (device != "cpu" && device != "cuda")
+        throw std::invalid_argument("--device must be cpu or cuda");
+    if (profile && device != "cuda")
+        throw std::invalid_argument("--profile requires --device cuda");
     const auto path = std::filesystem::path(std::u8string(args[2].begin(), args[2].end()));
     const spark::Gguf model(path);
     const spark::Tokenizer tokenizer(model);
@@ -117,10 +128,23 @@ void generate(const std::vector<std::string>& args) {
         throw std::invalid_argument("prompt and output exceed the context or prompt is empty");
     const auto eos = std::get<std::uint64_t>(model.metadata("tokenizer.ggml.eos_token_id"));
     const auto end_of_text = tokenizer.encode("<|endoftext|>", true);
-    spark::CpuModel session(model, path, context);
+    std::unique_ptr<spark::CpuModel> cpu;
+#ifdef SPARK_WITH_CUDA
+    std::unique_ptr<spark::GpuModel> gpu;
+    if (device == "cuda") gpu = std::make_unique<spark::GpuModel>(model, path, context, profile);
+#else
+    if (device == "cuda") throw std::runtime_error("this SPARK build has no CUDA backend");
+#endif
+    if (device == "cpu") cpu = std::make_unique<spark::CpuModel>(model, path, context);
+    const auto step = [&](spark::TokenId token, bool emit) {
+#ifdef SPARK_WITH_CUDA
+        if (gpu) return gpu->step(token, emit);
+#endif
+        return cpu->step(token, emit);
+    };
     std::span<const float> logits;
     for (std::size_t i = 0; i < input.size(); ++i)
-        logits = session.step(input[i], i + 1 == input.size());
+        logits = step(input[i], i + 1 == input.size());
     if (!logits_path.empty()) {
         std::ofstream file(logits_path, std::ios::binary);
         if (!file.write(reinterpret_cast<const char*>(logits.data()),
@@ -148,7 +172,7 @@ void generate(const std::vector<std::string>& args) {
         }
         output.push_back(token);
         if (!ids_only) std::cout << tokenizer.decode(std::span(&token, 1), true) << std::flush;
-        if (i + 1 < count) logits = session.step(token, true);
+        if (i + 1 < count) logits = step(token, true);
     }
     if (ids_only) print_ids(output); else std::cout << '\n';
 }

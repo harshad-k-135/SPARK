@@ -4,8 +4,8 @@ SPARK (Specialized Public Accelerated Runtime for Kernels) targets batch-one
 Qwen3.5-0.8B text generation on an NVIDIA GeForce RTX 3050 Laptop GPU. The model
 target is the local Q4_K_M GGUF. SPARK reads the file in native C++20.
 
-SPARK runs native text generation on CPU from this GGUF. CUDA generation,
-the control API, and the frontend still require implementation.
+SPARK runs native text generation on CPU and CUDA from this GGUF. The
+control API and frontend still require implementation.
 
 ## Build and inspect
 
@@ -15,6 +15,7 @@ powershell -File scripts/build_cpu.ps1
 & build/cpu/spark.exe tokenize --model 'PATH\TO\Qwen_Qwen3.5-0.8B-Q4_K_M.gguf' --prompt 'What is 2 + 2?'
 $env:OMP_NUM_THREADS = '6'
 & build/cpu/spark.exe generate --model 'PATH\TO\Qwen_Qwen3.5-0.8B-Q4_K_M.gguf' --prompt 'What is 2 + 2? Answer with just the digit.' --chat --max-new-tokens 16
+& build/cpu/spark.exe generate --model 'PATH\TO\Qwen_Qwen3.5-0.8B-Q4_K_M.gguf' --prompt 'What is 2 + 2? Answer with just the digit.' --chat --max-new-tokens 16 --device cuda
 ```
 
 Add `--tensors` to list each tensor's shape, format, byte offset, and size.
@@ -29,6 +30,10 @@ Generation defaults to greedy sampling and a context of 2,048 tokens.
 `--chat` selects the single-turn Qwen prompt format with thinking disabled.
 `--temperature`, `--top-p`, and `--seed` configure sampling. The CPU
 implementation expands approximately 3 GB of FP32 weights in host RAM.
+The CUDA baseline expands the same weights into a device arena. It uses
+NVRTC and cuBLAS from the local CUDA toolkit. The Windows build uses the
+toolkit pointed to by `CUDA_PATH`. Pass `--profile` on a CUDA request to
+record GPU stage timings for the first decode step after prefill.
 
 ## Reproduce CPU correctness checks
 
