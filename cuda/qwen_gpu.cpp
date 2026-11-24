@@ -6,7 +6,9 @@
 
 #include <array>
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <map>
@@ -150,6 +152,13 @@ struct Profile {
     }
 };
 
+struct Graphs {
+    std::array<CUgraphExec, 14> entries{};
+    ~Graphs() {
+        for (auto exec : entries) if (exec) SPARK_CUDA_CLEANUP(cuGraphExecDestroy(exec));
+    }
+};
+
 struct Matrix {
     CUdeviceptr data = 0;
     int cols = 0, rows = 0;
@@ -200,16 +209,21 @@ struct GpuModel::Impl {
     Profile profile;
     std::unique_ptr<DeviceArena> arena;
     Pinned host;
+    Pinned host_cursor;
+    Graphs graphs;
     std::array<Layer, 24> layers;
     Matrix embedding, last_norm;
     CUdeviceptr x, n, p, q, k, v, y, gate, up, z, alpha, beta, scores, logits;
     int length = 0;
     int capacity = 0;
     int emitted = 0;
+    DecodeGraph graph_mode;
+    CUdeviceptr cursor = 0;
     float eps = 0, base = 0;
 
-    Impl(const Gguf& gguf, const std::filesystem::path& path, std::size_t context, bool trace)
-        : profile(trace), capacity(static_cast<int>(context)) {
+    Impl(const Gguf& gguf, const std::filesystem::path& path, std::size_t context, bool trace,
+         DecodeGraph mode)
+        : profile(trace), capacity(static_cast<int>(context)), graph_mode(mode) {
         validate(gguf, context);
         eps = static_cast<float>(std::get<double>(gguf.metadata("qwen35.attention.layer_norm_rms_epsilon")));
         base = static_cast<float>(std::get<double>(gguf.metadata("qwen35.rope.freq_base")));
@@ -291,6 +305,11 @@ struct GpuModel::Impl {
         alpha = buffer(16); beta = buffer(16); scores = buffer(context * 8);
         logits = buffer(vocab);
         host.allocate(vocab);
+        if (graph_mode != DecodeGraph::off) {
+            static_assert(sizeof(float) == sizeof(int));
+            host_cursor.allocate(1);
+            cursor = arena->allocate(sizeof(int));
+        }
         std::cerr << "{\"event\":\"cuda_plan\",\"backend\":\"fp32\",\"arena_bytes\":"
                   << budget << ",\"context\":" << capacity << "}\n";
     }
@@ -323,11 +342,8 @@ struct GpuModel::Impl {
         emitted = 0;
     }
 
-    std::span<const float> step(TokenId token, bool emit) {
-        if (token >= vocab || length >= capacity) throw std::out_of_range("invalid CUDA token or position");
-        const bool trace = emit && emitted == 1 && profile.enabled();
-        SPARK_CUDA(cuMemcpyDtoDAsync(x, embedding.data + token * hidden * sizeof(float),
-                                     hidden * sizeof(float), stream.value));
+    void forward(bool emit, bool trace, unsigned extent, CUdeviceptr position_slot) {
+        const int position = position_slot ? 0 : length;
         if (trace) profile.mark(0, stream.value);
         for (std::size_t index = 0; index < layers.size(); ++index) {
             const auto& l = layers[index];
@@ -343,11 +359,12 @@ struct GpuModel::Impl {
             } else {
                 mv(l.k, n, k);
                 mv(l.v, n, v);
-                launch(kernel.norm_rope, 8, 1, 256, q, l.qnorm.data, 512, length, base, eps);
-                launch(kernel.norm_rope, 2, 1, 256, k, l.knorm.data, 256, length, base, eps);
-                launch(kernel.cache_kv, 2, 1, 256, k, v, l.keys, l.values, length);
-                launch(kernel.scores, length + 1, 8, 256, q, l.keys, scores, length + 1, capacity);
-                launch(kernel.read_attention, 8, 1, 256, q, l.values, scores, y, length + 1, capacity);
+                launch(kernel.norm_rope, 8, 1, 256, q, l.qnorm.data, 512, position, base, eps, position_slot);
+                launch(kernel.norm_rope, 2, 1, 256, k, l.knorm.data, 256, position, base, eps, position_slot);
+                launch(kernel.cache_kv, 2, 1, 256, k, v, l.keys, l.values, position, position_slot);
+                launch(kernel.scores, extent, 8, 256, q, l.keys, scores, position + 1, capacity, position_slot);
+                launch(kernel.read_attention, 8, 1, 256, q, l.values, scores, y, position + 1, capacity,
+                       position_slot);
             }
             mv(l.out, y, p);
             launch(kernel.residual, 4, 1, 256, x, p, hidden);
@@ -360,11 +377,52 @@ struct GpuModel::Impl {
             launch(kernel.residual, 4, 1, 256, x, p, hidden);
             if (trace) profile.mark(2 * index + 2, stream.value);
         }
-        ++length;
-        if (!emit) return {};
+        if (!emit) return;
         launch(kernel.rms, 1, 1, 256, x, last_norm.data, n, hidden, eps);
         mv(embedding, n, logits);
         if (trace) profile.mark(49, stream.value);
+    }
+
+    void replay_graph() {
+        const auto count = static_cast<unsigned>(length + 1);
+        const auto bucket = std::bit_ceil(count);
+        const auto index = graph_mode == DecodeGraph::single ? 13U : std::bit_width(bucket) - 1U;
+        const auto extent = graph_mode == DecodeGraph::single ? static_cast<unsigned>(capacity)
+                                                             : bucket;
+        auto& exec = graphs.entries[index];
+        if (!exec) {
+            CUgraph graph = nullptr;
+            SPARK_CUDA(cuStreamBeginCapture(stream.value, CU_STREAM_CAPTURE_MODE_THREAD_LOCAL));
+            try {
+                forward(true, false, extent, cursor);
+                SPARK_CUDA(cuStreamEndCapture(stream.value, &graph));
+            } catch (...) {
+                if (!graph) SPARK_CUDA_CLEANUP(cuStreamEndCapture(stream.value, &graph));
+                if (graph) SPARK_CUDA_CLEANUP(cuGraphDestroy(graph));
+                throw;
+            }
+            try {
+                SPARK_CUDA(cuGraphInstantiate(&exec, graph, 0));
+            } catch (...) {
+                SPARK_CUDA_CLEANUP(cuGraphDestroy(graph));
+                throw;
+            }
+            SPARK_CUDA(cuGraphDestroy(graph));
+        }
+        std::memcpy(host_cursor.value, &length, sizeof(length));
+        SPARK_CUDA(cuMemcpyHtoDAsync(cursor, host_cursor.value, sizeof(length), stream.value));
+        SPARK_CUDA(cuGraphLaunch(exec, stream.value));
+    }
+
+    std::span<const float> step(TokenId token, bool emit) {
+        if (token >= vocab || length >= capacity) throw std::out_of_range("invalid CUDA token or position");
+        const bool trace = emit && emitted == 1 && profile.enabled();
+        SPARK_CUDA(cuMemcpyDtoDAsync(x, embedding.data + token * hidden * sizeof(float),
+                                     hidden * sizeof(float), stream.value));
+        if (emit && emitted > 0 && graph_mode != DecodeGraph::off) replay_graph();
+        else forward(emit, trace, length + 1, 0);
+        ++length;
+        if (!emit) return {};
         SPARK_CUDA(cuMemcpyDtoHAsync(host.value, logits, host.size * sizeof(float), stream.value));
         SPARK_CUDA(cuStreamSynchronize(stream.value));
         ++emitted;
@@ -374,8 +432,8 @@ struct GpuModel::Impl {
 };
 
 GpuModel::GpuModel(const Gguf& gguf, const std::filesystem::path& path, std::size_t context,
-                   bool profile)
-    : impl_(std::make_unique<Impl>(gguf, path, context, profile)) {}
+                   bool profile, DecodeGraph graph)
+    : impl_(std::make_unique<Impl>(gguf, path, context, profile, graph)) {}
 GpuModel::~GpuModel() = default;
 void GpuModel::reset() { impl_->reset(); }
 std::span<const float> GpuModel::step(TokenId token, bool logits) { return impl_->step(token, logits); }
@@ -478,17 +536,17 @@ void test_qwen_cuda_ops() {
             }
         }
         const auto kg = put(input);
-        run(kernel.norm_rope, 2, 1, 256, kg, put(w), 256, position, 1e7F, eps);
+        run(kernel.norm_rope, 2, 1, 256, kg, put(w), 256, position, 1e7F, eps, CUdeviceptr{0});
         expect("normalization and RoPE", kg, k);
         auto keys = data(2 * 512), values = data(2 * 512);
         const auto key_cache = put(keys), value_cache = put(values), qg = put(q);
-        run(kernel.cache_kv, 2, 1, 256, kg, put(v), key_cache, value_cache, 1);
+        run(kernel.cache_kv, 2, 1, 256, kg, put(v), key_cache, value_cache, 1, CUdeviceptr{0});
         std::ranges::copy(k, keys.begin() + 512);
         std::ranges::copy(v, values.begin() + 512);
         expect("key cache", key_cache, keys);
         expect("value cache", value_cache, values);
         const auto score_gpu = arena.allocate(16 * sizeof(float));
-        run(kernel.scores, 2, 8, 256, qg, key_cache, score_gpu, 2, 2);
+        run(kernel.scores, 2, 8, 256, qg, key_cache, score_gpu, 2, 2, CUdeviceptr{0});
         std::array<float, 16> scores{};
         std::array<float, 2048> attention{};
         for (int h = 0; h < 8; ++h) {
@@ -505,7 +563,7 @@ void test_qwen_cuda_ops() {
         }
         expect("decode attention scores", score_gpu, scores);
         const auto output = arena.allocate(attention.size() * sizeof(float));
-        run(kernel.read_attention, 8, 1, 256, qg, value_cache, score_gpu, output, 2, 2);
+        run(kernel.read_attention, 8, 1, 256, qg, value_cache, score_gpu, output, 2, 2, CUdeviceptr{0});
         expect("decode attention readout", output, attention);
     }
     {

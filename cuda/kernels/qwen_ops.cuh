@@ -84,7 +84,8 @@ extern "C" __global__ void delta(const float* qkv, const float* z, const float* 
 }
 
 extern "C" __global__ void norm_rope(float* values, const float* w, int stride,
-                                       int position, float base, float eps) {
+                                       int position, float base, float eps, const int* cursor) {
+    if (cursor) position = *cursor;
     __shared__ float scratch[256];
     __shared__ float rotated[256];
     int i = threadIdx.x;
@@ -102,14 +103,16 @@ extern "C" __global__ void norm_rope(float* values, const float* w, int stride,
 }
 
 extern "C" __global__ void cache_kv(const float* k, const float* v, float* keys,
-                                      float* values, int position) {
+                                      float* values, int position, const int* cursor) {
+    if (cursor) position = *cursor;
     int i = blockIdx.x * 256 + threadIdx.x;
     keys[position * 512 + i] = k[i];
     values[position * 512 + i] = v[i];
 }
 
 extern "C" __global__ void scores(const float* q, const float* keys, float* score,
-                                    int length, int stride) {
+                                    int length, int stride, const int* cursor) {
+    if (cursor) length = *cursor + 1;
     __shared__ float scratch[256];
     int h = blockIdx.y, t = blockIdx.x, i = threadIdx.x;
     if (t >= length) return;
@@ -120,7 +123,8 @@ extern "C" __global__ void scores(const float* q, const float* keys, float* scor
 
 extern "C" __global__ void read_attention(const float* q, const float* values,
                                             const float* score, float* out, int length,
-                                            int stride) {
+                                            int stride, const int* cursor) {
+    if (cursor) length = *cursor + 1;
     __shared__ float scratch[256];
     int h = blockIdx.x, i = threadIdx.x;
     const float* scores = score + h * stride;

@@ -53,6 +53,7 @@ async function main() {
             const nativeArgs = ['generate', '--model', model, '--prompt-ids', promptTokens.join(','),
                 '--max-new-tokens', String(count), '--ids', '--first-logits', logitsFile];
             if (process.env.SPARK_DEVICE) nativeArgs.push('--device', process.env.SPARK_DEVICE);
+            if (process.env.SPARK_CUDA_GRAPH) nativeArgs.push('--cuda-graph', process.env.SPARK_CUDA_GRAPH);
             if (full) nativeArgs.push('--ignore-eos');
             const request = { prompt: promptTokens, temperature: 0, n_predict: count,
                 return_tokens: true, cache_prompt: false, ignore_eos: full, n_probs: full ? 0 : 8 };
