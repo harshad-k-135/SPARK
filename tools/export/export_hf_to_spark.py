@@ -2,10 +2,13 @@
 """Convert a local Llama safetensors snapshot to SPARK's row-major FP32 format."""
 
 import argparse
+import array
 import json
+import math
 import mmap
 import re
 import struct
+import sys
 from pathlib import Path
 
 MODEL_ID = "meta-llama/Llama-3.2-1B-Instruct"
@@ -61,9 +64,21 @@ def expected_shapes(config):
     return shapes
 
 
-def write_weights(source, destination, config):
-    import numpy as np
+def fp32_bytes(raw, dtype):
+    if dtype == "F32":
+        return raw
+    if dtype == "BF16":
+        result = bytearray(len(raw) * 2)
+        result[2::4] = raw[::2]
+        result[3::4] = raw[1::2]
+        return result
+    result = array.array("f", (value for (value,) in struct.iter_unpack("<e", raw)))
+    if sys.byteorder != "little":
+        result.byteswap()
+    return result
 
+
+def write_weights(source, destination, config):
     shapes = expected_shapes(config)
     tied = config.get("tie_word_embeddings", False)
     tensors = {}
@@ -86,26 +101,21 @@ def write_weights(source, destination, config):
                     if entry["shape"] != shapes[name]:
                         raise ValueError(f"unexpected shape for {name}")
                     begin, end = entry["data_offsets"]
-                    dtype = {"BF16": "<u2", "F16": "<f2", "F32": "<f4"}.get(entry["dtype"])
-                    count = int(np.prod(shapes[name], dtype=np.int64))
+                    dtype = entry["dtype"]
+                    item_size = {"BF16": 2, "F16": 2, "F32": 4}.get(dtype)
+                    count = math.prod(shapes[name])
                     if (
-                        dtype is None or begin < 0 or end < begin or payload + end > len(data)
-                        or end - begin != count * np.dtype(dtype).itemsize
+                        item_size is None or begin < 0 or end < begin or payload + end > len(data)
+                        or end - begin != count * item_size
                     ):
                         raise ValueError(f"invalid tensor storage for {name}")
                     tensors[name] = {
                         "shape": shapes[name], "dtype": "F32", "offset": output.tell(),
                     }
                     block_size = 1 << 20
-                    for offset in range(0, count, block_size):
-                        block = np.frombuffer(
-                            data, dtype=dtype, count=min(block_size, count - offset),
-                            offset=payload + begin + offset * np.dtype(dtype).itemsize,
-                        )
-                        if entry["dtype"] == "BF16":
-                            block = (block.astype("<u4") << 16).view("<f4")
-                        block.astype("<f4", copy=False).tofile(output)
-                        del block
+                    for offset in range(payload + begin, payload + end, block_size):
+                        raw = data[offset:min(offset + block_size, payload + end)]
+                        output.write(fp32_bytes(raw, dtype))
         if tied and "lm_head.weight" not in tensors and "model.embed_tokens.weight" in tensors:
             tensors["lm_head.weight"] = dict(tensors["model.embed_tokens.weight"])
         if missing := shapes.keys() - tensors.keys():
