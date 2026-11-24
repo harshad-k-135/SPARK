@@ -161,7 +161,7 @@ struct Graphs {
 
 struct Matrix {
     CUdeviceptr data = 0;
-    int cols = 0, rows = 0;
+    int cols = 0, rows = 0, bytes = 0, type = 0;
 };
 struct Layer {
     Matrix norm, post, up, gate, down, q, k, v, out, qnorm, knorm;
@@ -171,11 +171,13 @@ struct Layer {
 
 struct Kernels {
     CUfunction rms, residual, swiglu, convolve, delta, norm_rope, cache_kv, scores, read_attention;
+    CUfunction packed_matvec, packed_embedding;
     explicit Kernels(const Module& module)
         : rms(module.get("rms")), residual(module.get("residual")), swiglu(module.get("swiglu")),
           convolve(module.get("convolve")), delta(module.get("delta")),
           norm_rope(module.get("norm_rope")), cache_kv(module.get("cache_kv")),
-          scores(module.get("scores")), read_attention(module.get("read_attention")) {}
+          scores(module.get("scores")), read_attention(module.get("read_attention")),
+          packed_matvec(module.get("packed_matvec")), packed_embedding(module.get("packed_embedding")) {}
 };
 
 constexpr int hidden = 1024, width = 3584, vocab = 248320;
@@ -222,7 +224,7 @@ struct GpuModel::Impl {
     float eps = 0, base = 0;
 
     Impl(const Gguf& gguf, const std::filesystem::path& path, std::size_t context, bool trace,
-         DecodeGraph mode)
+         DecodeGraph mode, bool packed)
         : profile(trace), capacity(static_cast<int>(context)), graph_mode(mode) {
         validate(gguf, context);
         eps = static_cast<float>(std::get<double>(gguf.metadata("qwen35.attention.layer_norm_rms_epsilon")));
@@ -236,10 +238,11 @@ struct GpuModel::Impl {
             const auto elements = t.bytes / enc.bytes * enc.elements;
             if (elements > (std::numeric_limits<std::size_t>::max() - budget - 256) / sizeof(float))
                 throw std::runtime_error("model exceeds CUDA address space");
-            budget += elements * sizeof(float) + 256;
+            budget += (packed ? t.bytes : elements * sizeof(float)) + 256;
         }
         arena = std::make_unique<DeviceArena>(budget);
         std::ifstream file(path, std::ios::binary);
+        const bool use_packed = packed;
         const auto load = [&](const std::string& name, int columns, int rows = 1) {
             const auto& t = gguf.tensors().at(name);
             if (t.rank > 2 || t.shape[0] != static_cast<std::uint64_t>(columns) ||
@@ -249,6 +252,14 @@ struct GpuModel::Impl {
             file.seekg(static_cast<std::streamoff>(t.file_offset));
             if (!file.read(reinterpret_cast<char*>(packed.data()), packed.size()))
                 throw std::runtime_error("cannot read " + name);
+            if (use_packed) {
+                if (t.type != 0 && t.type != 8 && t.type != 12 && t.type != 13 && t.type != 14)
+                    throw std::runtime_error("unsupported GPU packed type for " + name);
+                const auto gpu = arena->allocate(packed.size());
+                SPARK_CUDA(cuMemcpyHtoD(gpu, packed.data(), packed.size()));
+                return Matrix{gpu, columns, rows, static_cast<int>(packed.size() / rows),
+                              static_cast<int>(t.type)};
+            }
             std::vector<float> values(static_cast<std::size_t>(columns) * rows);
             const auto row_bytes = packed.size() / rows;
 #ifdef _OPENMP
@@ -259,7 +270,7 @@ struct GpuModel::Impl {
                                 std::span(values).subspan(static_cast<std::size_t>(row) * columns, columns));
             const auto gpu = buffer(values.size());
             SPARK_CUDA(cuMemcpyHtoD(gpu, values.data(), values.size() * sizeof(float)));
-            return Matrix{gpu, columns, rows};
+            return Matrix{gpu, columns, rows, columns * static_cast<int>(sizeof(float)), 0};
         };
         embedding = load("token_embd.weight", hidden, vocab);
         last_norm = load("output_norm.weight", hidden);
@@ -310,7 +321,8 @@ struct GpuModel::Impl {
             host_cursor.allocate(1);
             cursor = arena->allocate(sizeof(int));
         }
-        std::cerr << "{\"event\":\"cuda_plan\",\"backend\":\"fp32\",\"arena_bytes\":"
+        std::cerr << "{\"event\":\"cuda_plan\",\"backend\":\"" << (packed ? "packed" : "fp32")
+                  << "\",\"arena_bytes\":"
                   << budget << ",\"context\":" << capacity << "}\n";
     }
 
@@ -324,6 +336,11 @@ struct GpuModel::Impl {
     }
 
     void mv(const Matrix& m, CUdeviceptr in, CUdeviceptr out) {
+        if (m.type != 0) {
+            launch(kernel.packed_matvec, (m.rows + 3) / 4, 1, 128, m.data, in, out,
+                   m.cols, m.rows, m.bytes, m.type);
+            return;
+        }
         const float one = 1, zero = 0;
         SPARK_CUDA(cublasSgemv(blas.value, CUBLAS_OP_T, m.cols, m.rows,
                                &one, reinterpret_cast<const float*>(m.data), m.cols,
@@ -417,8 +434,9 @@ struct GpuModel::Impl {
     std::span<const float> step(TokenId token, bool emit) {
         if (token >= vocab || length >= capacity) throw std::out_of_range("invalid CUDA token or position");
         const bool trace = emit && emitted == 1 && profile.enabled();
-        SPARK_CUDA(cuMemcpyDtoDAsync(x, embedding.data + token * hidden * sizeof(float),
-                                     hidden * sizeof(float), stream.value));
+        const auto row = embedding.data + static_cast<std::size_t>(token) * embedding.bytes;
+        if (embedding.type != 0) launch(kernel.packed_embedding, 4, 1, 256, row, x, embedding.type);
+        else SPARK_CUDA(cuMemcpyDtoDAsync(x, row, hidden * sizeof(float), stream.value));
         if (emit && emitted > 0 && graph_mode != DecodeGraph::off) replay_graph();
         else forward(emit, trace, length + 1, 0);
         ++length;
@@ -432,8 +450,8 @@ struct GpuModel::Impl {
 };
 
 GpuModel::GpuModel(const Gguf& gguf, const std::filesystem::path& path, std::size_t context,
-                   bool profile, DecodeGraph graph)
-    : impl_(std::make_unique<Impl>(gguf, path, context, profile, graph)) {}
+                   bool profile, DecodeGraph graph, bool packed)
+    : impl_(std::make_unique<Impl>(gguf, path, context, profile, graph, packed)) {}
 GpuModel::~GpuModel() = default;
 void GpuModel::reset() { impl_->reset(); }
 std::span<const float> GpuModel::step(TokenId token, bool logits) { return impl_->step(token, logits); }
@@ -504,6 +522,42 @@ void test_qwen_cuda_ops() {
         for (int r = 0; r < rows; ++r)
             expected[r] = dot(x, std::span(w).subspan(r * columns, columns));
         expect("cublas projection", output, expected, 1e-2F);
+    }
+    {
+        constexpr int columns = 1024, rows = 5;
+        const auto x = data(columns);
+        const auto x_gpu = put(x);
+        for (const int type : {8, 12, 13, 14}) {
+            const auto layout = gguf_encoding(type);
+            const auto row_bytes = columns / layout.elements * layout.bytes;
+            std::vector<std::uint8_t> packed(rows * row_bytes);
+            for (auto& byte : packed) byte = static_cast<std::uint8_t>(rng() % 256);
+            for (std::size_t start = 0; start < packed.size(); start += layout.bytes) {
+                const auto scale = start + (type == 14 ? 208 : 0);
+                packed[scale] = 0;
+                packed[scale + 1] = 0x24;
+                if (type == 12 || type == 13) {
+                    packed[start + 2] = 0;
+                    packed[start + 3] = 0x20;
+                }
+            }
+            const auto weights_gpu = arena.allocate(packed.size());
+            SPARK_CUDA(cuMemcpyHtoD(weights_gpu, packed.data(), packed.size()));
+            const auto output = arena.allocate(rows * sizeof(float));
+            run(kernel.packed_matvec, 2, 1, 128, weights_gpu, x_gpu, output, columns, rows,
+                static_cast<int>(row_bytes), type);
+            std::array<float, rows> expected{};
+            std::array<float, columns> row{};
+            for (std::size_t r = 0; r < rows; ++r) {
+                unpack_gguf_row(type, std::span(packed).subspan(r * row_bytes, row_bytes), row);
+                expected[r] = dot(x, row);
+            }
+            expect("packed GPU projection", output, expected, 1e-2F);
+            const auto embedding = arena.allocate(columns * sizeof(float));
+            run(kernel.packed_embedding, 4, 1, 256, weights_gpu, embedding, type);
+            unpack_gguf_row(type, std::span(packed).first(row_bytes), row);
+            expect("packed GPU embedding", embedding, row);
+        }
     }
     {
         const auto x = data(6144), history = data(3 * 6144), filters = data(4 * 6144);

@@ -34,7 +34,8 @@ constexpr auto usage =
     "              [--device cpu|cuda] [--max-new-tokens N] [--context N] [--temperature T]\n"
     "              [--top-p P] [--seed N]\n"
     "              [--ignore-eos] [--ids] [--first-logits PATH] [--profile] [--timings]\n"
-    "              [--warmups N] [--trials N] [--cuda-graph off|single|bucket]\n";
+    "              [--warmups N] [--trials N] [--cuda-graph off|single|bucket]\n"
+    "              [--cuda-weights fp32|packed]\n";
 
 template <typename T>
 void parse_number(std::string_view value, T& result, std::string_view option) {
@@ -76,6 +77,7 @@ void generate(const std::vector<std::string>& args) {
     bool chat = false, ids_only = false, ignore_eos = false, profile = false, timings = false;
     std::string_view device = "cpu";
     std::string_view graph = "off";
+    std::string_view weights = "fp32";
     std::filesystem::path logits_path;
     std::size_t count = 64;
     std::size_t context = 2048;
@@ -89,6 +91,7 @@ void generate(const std::vector<std::string>& args) {
         else if (args[i] == "--timings") timings = true;
         else if (args[i] == "--device" && i + 1 < args.size()) device = args[++i];
         else if (args[i] == "--cuda-graph" && i + 1 < args.size()) graph = args[++i];
+        else if (args[i] == "--cuda-weights" && i + 1 < args.size()) weights = args[++i];
         else if (args[i] == "--first-logits" && i + 1 < args.size()) {
             const auto& value = args[++i];
             logits_path = std::filesystem::path(std::u8string(value.begin(), value.end()));
@@ -125,6 +128,8 @@ void generate(const std::vector<std::string>& args) {
         throw std::invalid_argument("--profile requires --device cuda");
     if (graph != "off" && ((graph != "single" && graph != "bucket") || device != "cuda" || profile))
         throw std::invalid_argument("CUDA graph requires a CUDA request without --profile");
+    if (weights != "fp32" && (weights != "packed" || device != "cuda"))
+        throw std::invalid_argument("--cuda-weights must be fp32 or packed on CUDA");
     if (trials == 0 || trials > 100 || warmups > 100)
         throw std::invalid_argument("invalid warmup or trial count");
     if ((warmups || trials != 1) && (!timings || !logits_path.empty()))
@@ -157,7 +162,8 @@ void generate(const std::vector<std::string>& args) {
     if (device == "cuda") {
         const auto mode = graph == "single" ? spark::DecodeGraph::single
                         : graph == "bucket" ? spark::DecodeGraph::bucket : spark::DecodeGraph::off;
-        gpu = std::make_unique<spark::GpuModel>(model, path, context, profile, mode);
+        gpu = std::make_unique<spark::GpuModel>(model, path, context, profile, mode,
+                                               weights == "packed");
     }
 #else
     if (device == "cuda") throw std::runtime_error("this SPARK build has no CUDA backend");

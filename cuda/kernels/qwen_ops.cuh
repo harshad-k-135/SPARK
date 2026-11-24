@@ -146,4 +146,58 @@ extern "C" __global__ void read_attention(const float* q, const float* values,
         total += expf(scores[t] - highest) * values[t * 512 + (h / 4) * 256 + i];
     out[h * 256 + i] = total / mass * sigmoid(q[h * 512 + 256 + i]);
 }
+
+// Packed rows follow GGUF blocks. Each warp owns one output row, and four
+// independent warps share a block. Thirty-two contiguous input lanes share
+// K-quant scale metadata and avoid writing a dequantized matrix.
+__device__ float block_half(const unsigned char* p) {
+    unsigned short bits = p[0] | (p[1] << 8);
+    float result;
+    asm("cvt.f32.f16 %0, %1;" : "=f"(result) : "h"(bits));
+    return result;
+}
+
+__device__ float packed_value(const unsigned char* row, int pos, int type) {
+    if (type == 8) {
+        const auto* p = row + (pos / 32) * 34;
+        return block_half(p) * (signed char)p[2 + pos % 32];
+    }
+    int item = pos % 256;
+    if (type == 14) {
+        const auto* p = row + (pos / 256) * 210;
+        int section = item / 128, quarter = item / 32 % 4, lane = item % 32;
+        int low = (p[section * 64 + quarter % 2 * 32 + lane] >> (4 * (quarter / 2))) & 15;
+        int high = (p[128 + section * 32 + lane] >> (2 * quarter)) & 3;
+        return block_half(p + 208) * (signed char)p[192 + item / 16] *
+            ((low | (high << 4)) - 32);
+    }
+    const bool fifth = type == 13;
+    const auto* p = row + (pos / 256) * (fifth ? 176 : 144);
+    const auto* scale = p + 4;
+    int group = item / 32, lane = item % 32;
+    int ds = group < 4 ? (scale[group] & 63)
+                       : ((scale[group + 4] & 15) | ((scale[group - 4] >> 6) << 4));
+    int ms = group < 4 ? (scale[group + 4] & 63)
+                       : ((scale[group + 4] >> 4) | ((scale[group] >> 6) << 4));
+    const auto* bits = p + (fifth ? 48 : 16);
+    int q = (bits[group / 2 * 32 + lane] >> (4 * (group % 2))) & 15;
+    if (fifth) q |= ((p[16 + lane] >> group) & 1) << 4;
+    return block_half(p) * ds * q - block_half(p + 2) * ms;
+}
+
+extern "C" __global__ void packed_matvec(const unsigned char* data, const float* x,
+                                         float* y, int cols, int rows, int bytes, int type) {
+    int lane = threadIdx.x % 32, r = blockIdx.x * 4 + threadIdx.x / 32;
+    if (r >= rows) return;
+    const auto* row = data + static_cast<unsigned long long>(r) * bytes;
+    float sum = 0;
+    for (int i = lane; i < cols; i += 32) sum += packed_value(row, i, type) * x[i];
+    for (int i = 16; i; i /= 2) sum += __shfl_down_sync(0xffffffff, sum, i);
+    if (lane == 0) y[r] = sum;
+}
+
+extern "C" __global__ void packed_embedding(const unsigned char* row, float* x, int type) {
+    int i = blockIdx.x * 256 + threadIdx.x;
+    x[i] = packed_value(row, i, type);
+}
 )CUDA"

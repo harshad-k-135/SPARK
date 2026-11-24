@@ -34,11 +34,14 @@ async function main() {
         '--query-gpu=name,driver_version,pstate,memory.total', '--format=csv,noheader',
     ]);
     const graph = process.env.SPARK_CUDA_GRAPH || 'off';
-    const { stderr } = await execute(spark, [
+    const weights = process.env.SPARK_CUDA_WEIGHTS || 'fp32';
+    const args = [
         'generate', '--model', model, '--prompt-ids', ids.join(','), '--device', device,
         '--max-new-tokens', String(generatedTokens), '--ignore-eos', '--ids', '--timings',
         '--warmups', String(warmups), '--trials', String(measured), '--cuda-graph', graph,
-    ], { timeout: 1800000 });
+    ];
+    if (process.env.SPARK_CUDA_WEIGHTS) args.push('--cuda-weights', weights);
+    const { stderr } = await execute(spark, args, { timeout: 1800000 });
     const events = stderr.trim().split(/\r?\n/).filter(line => line.startsWith('{')).map(JSON.parse);
     const trials = events.filter(row => row.event === 'generation_timings');
     const results = trials.filter(row => !row.warmup);
@@ -51,7 +54,9 @@ async function main() {
         return [field, { median: quantile(data, 0.5), iqr: quantile(data, 0.75) - quantile(data, 0.25),
             p95: quantile(data, 0.95) }];
     }));
-    const report = { runtime: graph === 'off' ? 'spark-qwen-v0' : 'spark-qwen-graph-' + graph,
+    const runtime = weights === 'packed' ? 'spark-qwen-packed' :
+        graph === 'off' ? 'spark-qwen-v0' : 'spark-qwen-graph-' + graph;
+    const report = { runtime,
         commit: commit.trim(), hardware: hardware.trim(),
         model_sha256: modelHash.digest('hex'), context: 2048, prompt_token_ids: ids, warmups, measured,
         time_boundaries: 'First token starts at prefill on supplied token IDs. Load is measured separately.',

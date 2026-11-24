@@ -13,7 +13,7 @@ enum class DecodeGraph { off, single, bucket };
 class GpuModel {
 public:
     GpuModel(const Gguf& gguf, const std::filesystem::path& path, std::size_t context,
-             bool profile = false, DecodeGraph graph = DecodeGraph::off);
+             bool profile = false, DecodeGraph graph = DecodeGraph::off, bool packed = false);
     ~GpuModel();
     void reset();
     std::span<const float> step(TokenId token, bool logits);
