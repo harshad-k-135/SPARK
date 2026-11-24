@@ -26,6 +26,8 @@ try {
         $objects += $object
     }
     g++ @flags -municode @objects engine/runtime/cli.cpp -o build/cpu/spark.exe
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    g++ @flags @objects tests/golden/check_reference.cpp -o build/cpu/spark_check.exe
     exit $LASTEXITCODE
 } finally {
     Pop-Location

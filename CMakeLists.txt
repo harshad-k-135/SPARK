@@ -35,3 +35,20 @@ target_link_libraries(spark PRIVATE spark_cpu)
 if(MINGW)
     target_link_options(spark PRIVATE -municode)
 endif()
+
+if(BUILD_TESTING)
+    add_executable(spark_check tests/golden/check_reference.cpp)
+    target_link_libraries(spark_check PRIVATE spark_cpu)
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME spark_cpu_smoke
+                 COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tools/reference/generate_smoke.py"
+                 --check $<TARGET_FILE:spark_check> --cli $<TARGET_FILE:spark>)
+    endif()
+    set(SPARK_GATE1_MODEL "" CACHE PATH "Exported pinned Meta Llama 3.2 1B model for Gate 1")
+    if(SPARK_GATE1_MODEL)
+        add_test(NAME spark_gate_1 COMMAND spark_check --gate1 "${SPARK_GATE1_MODEL}"
+                 "${PROJECT_SOURCE_DIR}/tests/golden/reference.json")
+    endif()
+endif()
