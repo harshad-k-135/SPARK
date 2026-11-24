@@ -22,8 +22,16 @@ add_library(spark_model engine/model_loader/json.cpp engine/model_loader/model.c
 target_link_libraries(spark_model PUBLIC spark_tokenizer)
 
 add_library(spark_cpu engine/transformer/cpu_forward.cpp engine/runtime/session.cpp)
-target_link_libraries(spark_cpu PUBLIC spark_model)
+add_library(spark_sampling engine/sampling/sampler.cpp)
+target_link_libraries(spark_sampling PUBLIC spark_tokenizer)
+target_link_libraries(spark_cpu PUBLIC spark_model spark_sampling)
 find_package(OpenMP QUIET COMPONENTS CXX)
 if(OpenMP_CXX_FOUND)
     target_link_libraries(spark_cpu PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(spark engine/runtime/cli.cpp)
+target_link_libraries(spark PRIVATE spark_cpu)
+if(MINGW)
+    target_link_options(spark PRIVATE -municode)
 endif()

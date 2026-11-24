@@ -33,4 +33,30 @@ std::span<const float> Session::decode_step(TokenId token) {
     return forward_.logits();
 }
 
+std::vector<TokenId> Session::generate(std::span<const TokenId> prompt, std::size_t new_tokens,
+                                       SamplingOptions options) {
+    if (prompt.size() > context_ || new_tokens > context_ - prompt.size()) {
+        throw std::invalid_argument("prompt plus requested output exceeds the context limit");
+    }
+    Sampler sampler(model_.config().vocab, options);
+    std::vector<TokenId> output;
+    output.reserve(new_tokens);
+    if (new_tokens == 0) {
+        return output;
+    }
+    auto logits = prefill(prompt);
+    const auto& eos = model_.config().eos;
+    for (std::size_t step = 0; step < new_tokens; ++step) {
+        const auto token = sampler.sample(logits);
+        if (std::ranges::find(eos, token) != eos.end()) {
+            break;
+        }
+        output.push_back(token);
+        if (step + 1 < new_tokens) {
+            logits = decode_step(token);
+        }
+    }
+    return output;
+}
+
 }  // namespace spark
