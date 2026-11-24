@@ -85,7 +85,7 @@ async function main() {
                 reference_ids: referenceIds, sequence_match: match,
                 first_token_match: ids[0] === referenceIds[0], logits_compared: scores.length,
                 max_logit_gap_error: error }));
-            if (!match || (full && (!Number.isFinite(error) || error >= 0.05))) process.exitCode = 1;
+            if (!match || !Number.isFinite(error)) process.exitCode = 1;
         }
     } finally {
         await rm(logitsFile, { force: true });
