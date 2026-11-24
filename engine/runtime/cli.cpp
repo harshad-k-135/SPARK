@@ -1,5 +1,6 @@
 #include "engine/model_loader/gguf.hpp"
 #include "engine/model_loader/packed_weights.hpp"
+#include "engine/tokenizer/tokenizer.hpp"
 
 #include <iostream>
 #include <cmath>
@@ -18,7 +19,9 @@
 
 namespace {
 
-constexpr auto usage = "Usage: spark inspect --model FILE.gguf [--tensors]\n";
+constexpr auto usage =
+    "Usage: spark inspect --model FILE.gguf [--tensors]\n"
+    "       spark tokenize --model FILE.gguf --prompt TEXT [--special]\n";
 
 void inspect(const std::filesystem::path& path, bool list_tensors) {
     const spark::Gguf model(path);
@@ -94,6 +97,23 @@ int run(const std::vector<std::string>& args) {
     }
     if (args[0] == "generate") {
         throw std::runtime_error("native Qwen3.5 generation is pending CPU forward-pass parity");
+    }
+    if ((args.size() == 5 || args.size() == 6) && args[0] == "tokenize" && args[1] == "--model" &&
+        args[3] == "--prompt" && (args.size() == 5 || args[5] == "--special")) {
+        const auto path = std::filesystem::path(std::u8string(args[2].begin(), args[2].end()));
+        const spark::Gguf model(path);
+        const spark::Tokenizer tokenizer(model);
+        const auto ids = tokenizer.encode(args[4], args.size() == 6);
+        if (tokenizer.decode(ids) != args[4]) {
+            throw std::runtime_error("Qwen3.5 tokenizer round-trip changed the prompt bytes");
+        }
+        std::cout << '[';
+        for (std::size_t i = 0; i < ids.size(); ++i) {
+            if (i > 0) std::cout << ',';
+            std::cout << ids[i];
+        }
+        std::cout << "]\n";
+        return 0;
     }
     if ((args.size() != 3 && args.size() != 4) || args[0] != "inspect" || args[1] != "--model" ||
         (args.size() == 4 && args[3] != "--tensors")) {

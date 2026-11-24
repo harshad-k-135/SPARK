@@ -5,7 +5,8 @@
 | CUDA runtime bootstrap | Passed | RTX 3050 detected. CUDA 12.8 allocated and freed 4,096 bytes. |
 | Qwen GGUF import | Passed | Native C++ inspection validated the supplied file layout and classified all blocks. |
 | Packed weight decoding | Passed | Fixed FP32, FP16, BF16, Q4_K, Q5_K, Q6_K, and Q8_0 cases passed. The native inspector read and decoded the first real embedding row. |
-| 1 — Qwen CPU parity | Pending | Requires tokenizer, the text forward pass, and 20 × 64 reference continuations. |
+| Qwen tokenizer smoke | Passed | Eight prompts matched the external reference token for token and round-tripped byte for byte. [Raw output](../benchmark/results/qwen-local-smoke/native-tokenizer.jsonl) |
+| 1 — Qwen CPU parity | Pending | Requires the text forward pass and 20 × 64 reference continuations. |
 | 2 — Qwen CUDA parity and baseline | Pending Gate 1 | |
 | 3 — Optimized Qwen decode | Pending Gate 2 | |
 | 4 — GPU comparison and control API | Pending Gate 3 | |

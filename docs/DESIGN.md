@@ -15,9 +15,14 @@ inputs and the second is the number of output rows. The loader records
 absolute payload offsets and preserves packed tensors in their file layout.
 [GGUF specification](https://github.com/ggml-org/ggml/blob/master/docs/gguf.md)
 
-The artifact uses F32, Q4_K, Q5_K, Q6_K, and Q8_0. CPU parity will check
-dequantized weights, project-and-normalize operations, both attention paths,
-and the tokenizer before checking full-model autoregressive output. Device
+The artifact uses F32, Q4_K, Q5_K, Q6_K, and Q8_0. SPARK decodes packed
+rows to FP32 for CPU verification. Its byte BPE tokenizer reads vocabulary,
+token classes, and ranked merges from the GGUF. The pre-tokenizer attaches
+combining marks to words and splits digits individually. Ordinary prompts
+keep template markers literal unless special-token parsing is requested.
+
+CPU parity covers project-and-normalize operations, both attention paths,
+and full-model autoregressive output. Device
 execution will hold the packed weights plus recurrent state, FP16 KV for the
 six full-attention blocks, activations, and scratch. The planner must check
 actual free VRAM with a 512 MiB reserve and cap context at 4,096 tokens.

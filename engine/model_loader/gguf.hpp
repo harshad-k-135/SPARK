@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 namespace spark {
 
@@ -33,10 +34,13 @@ public:
     [[nodiscard]] const GgufValue& metadata(std::string_view key) const;
     [[nodiscard]] const auto& tensors() const { return tensors_; }
     [[nodiscard]] const auto& entries() const { return metadata_; }
+    [[nodiscard]] std::vector<std::string> strings(std::string_view key) const;
+    [[nodiscard]] std::vector<std::int32_t> integers(std::string_view key) const;
     [[nodiscard]] std::uint64_t size() const { return size_; }
     [[nodiscard]] std::uint32_t version() const { return version_; }
 
 private:
+    std::filesystem::path path_;
     std::map<std::string, GgufValue, std::less<>> metadata_;
     std::map<std::string, GgufTensor, std::less<>> tensors_;
     std::uint64_t size_ = 0;

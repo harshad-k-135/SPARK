@@ -1,0 +1,8 @@
+{"name":"arithmetic","token_count":8,"tokens":[3710,369,220,17,478,220,17,30],"matches":true}
+{"name":"numbers","token_count":17,"tokens":[16,17,18,19,20,21,220,15,22,25,19,20,471,16,13,17,20],"matches":true}
+{"name":"unicode","token_count":18,"tokens":[109266,3709,115197,6115,149518,84237,150104,153348,184642,235886,1710,50203,39579,52033,10838,234,99,29545],"matches":true}
+{"name":"spaces","token_count":8,"tokens":[220,23066,197,73891,78035,220,16415,256],"matches":true}
+{"name":"contractions","token_count":12,"tokens":[7751,914,2466,13,19076,90902,1532,26,353,3172,10033,13],"matches":true}
+{"name":"leading-mark","token_count":2,"tokens":[52033,13],"matches":true}
+{"name":"template","token_count":6,"tokens":[248045,846,198,9419,248046,198],"matches":true}
+{"name":"literal-template","token_count":7,"tokens":[27,91,316,4747,91,29,846],"matches":true}

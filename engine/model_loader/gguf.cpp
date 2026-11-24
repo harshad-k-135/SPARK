@@ -133,7 +133,7 @@ GgufValue read_value(Reader& reader, std::uint32_t type) {
 
 }  // namespace
 
-Gguf::Gguf(const std::filesystem::path& path) : size_(std::filesystem::file_size(path)) {
+Gguf::Gguf(const std::filesystem::path& path) : path_(path), size_(std::filesystem::file_size(path)) {
     if (size_ > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max())) {
         throw std::runtime_error("GGUF exceeds the supported file size");
     }
@@ -220,6 +220,36 @@ const GgufValue& Gguf::metadata(std::string_view key) const {
         throw std::runtime_error("missing GGUF metadata " + std::string(key));
     }
     return entry->second;
+}
+
+std::vector<std::string> Gguf::strings(std::string_view key) const {
+    const auto& array = std::get<GgufArray>(metadata(key));
+    if (array.element_type != 8) {
+        throw std::runtime_error("expected a GGUF string array for " + std::string(key));
+    }
+    Reader reader(path_, size_);
+    reader.skip(array.file_offset);
+    std::vector<std::string> values;
+    values.reserve(array.count);
+    for (std::uint64_t i = 0; i < array.count; ++i) {
+        values.push_back(reader.string());
+    }
+    return values;
+}
+
+std::vector<std::int32_t> Gguf::integers(std::string_view key) const {
+    const auto& array = std::get<GgufArray>(metadata(key));
+    if (array.element_type != 5) {
+        throw std::runtime_error("expected a GGUF int32 array for " + std::string(key));
+    }
+    Reader reader(path_, size_);
+    reader.skip(array.file_offset);
+    std::vector<std::int32_t> values;
+    values.reserve(array.count);
+    for (std::uint64_t i = 0; i < array.count; ++i) {
+        values.push_back(reader.number<std::int32_t>());
+    }
+    return values;
 }
 
 }  // namespace spark
