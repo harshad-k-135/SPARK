@@ -32,3 +32,20 @@ contiguous value rows. A step decays the previous state, measures the value
 prediction error at the key, and adds the gated key–error outer product. The
 query then reads the updated state. The recurrence takes pre-normalized query
 and key vectors and precomputed scalar gates.
+
+## CUDA baseline
+
+The Windows MinGW build uses NVRTC to compile the bundled CUDA C++ kernels
+and launches them on one explicit non-default CUDA stream. The FP32 baseline
+widens the same packed GGUF weights used by the CPU parity path. It keeps
+those weights, Gated DeltaNet state, causal convolution history, the six
+FP32 KV caches, and scratch in one load-time device arena. The planner checks
+`cudaMemGetInfo` with a 512 MiB margin. KV rows are indexed by position,
+KV head, and feature. DeltaNet state is indexed by head, key feature, and
+value feature.
+
+cuBLAS performs dense projections. CUDA kernels handle normalization,
+residuals, convolution, Gated DeltaNet state, gated attention, and SwiGLU.
+The runtime copies logits to pinned host memory and waits on its stream
+only when sampling produces a host-visible token. Repeated benchmark
+requests reset recurrent state between trials and reuse the arena.
