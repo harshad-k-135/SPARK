@@ -6,6 +6,7 @@
 | Qwen GGUF import | Passed | Native C++ inspection validated the supplied file layout and classified all blocks. |
 | Packed weight decoding | Passed | Fixed FP32, FP16, BF16, Q4_K, Q5_K, Q6_K, and Q8_0 cases passed. The native inspector read and decoded the first real embedding row. |
 | Qwen tokenizer smoke | Passed | Eight prompts matched the external reference token for token and round-tripped byte for byte. [Raw output](../benchmark/results/qwen-local-smoke/native-tokenizer.jsonl) |
+| Gated DeltaNet recurrence | Passed | A two-step CPU test checked state decay, the delta update, and query readout against hand-computed values. |
 | 1 — Qwen CPU parity | Pending | Requires the text forward pass and 20 × 64 reference continuations. |
 | 2 — Qwen CUDA parity and baseline | Pending Gate 1 | |
 | 3 — Optimized Qwen decode | Pending Gate 2 | |

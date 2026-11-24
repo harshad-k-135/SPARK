@@ -13,6 +13,8 @@ try {
     g++ @flags -municode engine/model_loader/gguf.cpp engine/model_loader/packed_weights.cpp engine/runtime/cli.cpp engine/tokenizer/tokenizer.cpp -o build/cpu/spark.exe
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     g++ @flags engine/model_loader/gguf.cpp engine/model_loader/packed_weights.cpp tests/unit/packed_weights.cpp -o build/cpu/spark_packed_weights_test.exe
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    g++ @flags engine/transformer/delta_net.cpp tests/unit/delta_net.cpp -o build/cpu/spark_delta_net_test.exe
     exit $LASTEXITCODE
 } finally {
     Pop-Location

@@ -26,3 +26,9 @@ and full-model autoregressive output. Device
 execution will hold the packed weights plus recurrent state, FP16 KV for the
 six full-attention blocks, activations, and scratch. The planner must check
 actual free VRAM with a 512 MiB reserve and cap context at 4,096 tokens.
+
+The CPU DeltaNet recurrence stores each head's state as a matrix with
+contiguous value rows. A step decays the previous state, measures the value
+prediction error at the key, and adds the gated key–error outer product. The
+query then reads the updated state. The recurrence takes pre-normalized query
+and key vectors and precomputed scalar gates.
