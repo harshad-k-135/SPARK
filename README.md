@@ -66,6 +66,16 @@ Open the loopback address printed by Uvicorn, normally
 `http://127.0.0.1:8765/`. **Generate** starts the native CUDA worker on
 demand with packed GGUF weights. **Compare** loads stored trial results and can queue another native
 benchmark. The service serializes generation and benchmarks on the GPU.
-An external GPU comparison requires a CUDA-capable llama.cpp build.
+**Run head-to-head** benchmarks SPARK and the CUDA llama.cpp server on the
+same model and GPU. Use the comparison section to switch prompt length and
+metric or select an individual trial. The API defaults to the repaired
+`build/llama-b10159-cuda13/llama-server.exe`. Set `SPARK_LLAMA_SERVER` to
+override its path.
+
+Run the same harness directly from the repository:
+
+```powershell
+node benchmark/comparison/compare_cuda.cjs build/cpu/spark.exe build/llama-b10159-cuda13/llama-server.exe 'PATH\TO\Qwen.gguf' build/spark-vs-llama-cuda.json
+```
 
 See [gate results](docs/RESULTS.md) and the [model layout](docs/DESIGN.md).
