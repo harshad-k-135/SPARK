@@ -3,6 +3,8 @@ const { createHash } = require('node:crypto');
 const { createReadStream } = require('node:fs');
 const { writeFile, rename } = require('node:fs/promises');
 const { createServer } = require('node:net');
+const { cpus, release, totalmem } = require('node:os');
+const { resolve } = require('node:path');
 const { createInterface } = require('node:readline');
 const { setTimeout: delay } = require('node:timers/promises');
 const { promisify } = require('node:util');
@@ -14,7 +16,8 @@ const passage = 'The observatory log records a clear evening and a steady breeze
     'The team set up the small telescope before sunset and checked the alignment. ' +
     'Summarize the observations and explain what the team should record next.\n';
 const metrics = ['decode_tokens_per_sec', 'first_token_ms', 'prefill_tokens_per_sec',
-    'decode_ms', 'peak_vram_mib', 'gpu_utilization_pct'];
+    'decode_ms', 'total_latency_ms', 'peak_vram_mib', 'gpu_utilization_pct',
+    'peak_ram_mib', 'cpu_utilization_pct', 'board_tokens_per_joule'];
 
 function quantile(values, fraction) {
     if (!values.length) return null;
@@ -26,7 +29,11 @@ function quantile(values, fraction) {
 function summarize(trials) {
     return Object.fromEntries(metrics.map(key => {
         const data = trials.filter(t => !t.warmup).map(t => t[key]).filter(Number.isFinite);
-        return [key, { median: quantile(data, 0.5),
+        const mean = data.length ? data.reduce((sum, value) => sum + value, 0) / data.length : null;
+        const stdev = data.length > 1
+            ? Math.sqrt(data.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (data.length - 1))
+            : null;
+        return [key, { n: data.length, mean, stdev, median: quantile(data, 0.5),
             iqr: data.length ? quantile(data, 0.75) - quantile(data, 0.25) : null,
             p95: quantile(data, 0.95) }];
     }));
@@ -45,7 +52,7 @@ function managed(executable, flags, options) {
         } };
 }
 
-function telemetry() {
+function telemetry(pid) {
     const params = ['utilization.gpu', 'memory.used', 'power.draw', 'temperature.gpu', 'clocks.gr', 'clocks.mem'];
     const device = managed('nvidia-smi', ['--query-gpu=' + params.join(','),
         '--format=csv,noheader,nounits', '--loop-ms=100'], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -58,7 +65,24 @@ function telemetry() {
             samples.push({ time_ms: performance.now(), utilization_pct: values[0], memory_mib: values[1],
                 power_w: values[2], temperature_c: values[3], graphics_mhz: values[4], memory_mhz: values[5] });
     });
-    return { samples, async stop() { await device.stop(); lines.close(); } };
+    const host = [];
+    let processMonitor, hostLines;
+    if (process.platform === 'win32') {
+        processMonitor = managed('powershell.exe', ['-NoProfile', '-NonInteractive', '-File',
+            resolve(__dirname, '../metrics/process_windows.ps1'), String(pid)],
+            {stdio: ['ignore', 'pipe', 'pipe']});
+        hostLines = createInterface({input: processMonitor.child.stdout});
+        hostLines.on('line', line => {
+            const [cpu_seconds, working_set_bytes] = line.split(',').map(Number);
+            if (Number.isFinite(cpu_seconds) && Number.isFinite(working_set_bytes))
+                host.push({time_ms: performance.now(), cpu_seconds, working_set_bytes});
+        });
+    }
+    return { samples, host, async stop() {
+        await Promise.all([device.stop(), processMonitor?.stop()]);
+        lines.close();
+        hostLines?.close();
+    } };
 }
 
 function finish(start, stamps, ids, prefill, sensor) {
@@ -70,7 +94,21 @@ function finish(start, stamps, ids, prefill, sensor) {
     const samples = sensor.samples.filter(s => s.time_ms >= start && s.time_ms <= end);
     const vram = samples.map(s => s.memory_mib).filter(Number.isFinite);
     const utilization = samples.map(s => s.utilization_pct).filter(Number.isFinite);
+    const host = sensor.host.filter(s => s.time_ms >= start && s.time_ms <= end);
+    const firstHost = host[0], lastHost = host.at(-1);
+    const power = samples.filter(s => Number.isFinite(s.power_w));
+    const coverage = power.length >= 2 ? (power.at(-1).time_ms - power[0].time_ms) / (end - start) : 0;
+    // Integrate only when adjacent sampled points cover most of the request.
+    const energy = coverage >= 0.8 && power.every((s, i) => !i || s.time_ms - power[i - 1].time_ms < 350)
+        ? power.slice(1).reduce((sum, cur, i) => sum + (cur.power_w + power[i].power_w) *
+            (cur.time_ms - power[i].time_ms) / 2000, 0) / coverage : null;
     return { first_token_ms: stamps[0] - start, decode_ms: decode,
+        total_latency_ms: end - start,
+        peak_ram_mib: host.length ? Math.max(...host.map(s => s.working_set_bytes)) / 1048576 : null,
+        cpu_utilization_pct: host.length >= 2 ? (lastHost.cpu_seconds - firstHost.cpu_seconds) *
+            100000 / ((lastHost.time_ms - firstHost.time_ms) * cpus().length) : null,
+        board_tokens_per_joule: energy > 0 ? outputTokens / energy : null,
+        host_telemetry: host.map(({time_ms, ...rest}) => ({elapsed_ms: time_ms - start, ...rest})),
         decode_tokens_per_sec: (outputTokens - 1) * 1000 / decode, prefill_ms: prefill,
         prefill_tokens_per_sec: null, generated_token_ids: ids,
         peak_vram_mib: vram.length ? Math.max(...vram) : null,
@@ -78,9 +116,11 @@ function finish(start, stamps, ids, prefill, sensor) {
         telemetry: samples.map(({time_ms, ...rest}) => ({elapsed_ms: time_ms - start, ...rest})) };
 }
 
-async function sparkSession(exe, model) {
+async function sparkSession(exe, model, batchPrefill) {
     const launch = performance.now();
-    const proc = managed(exe, ['serve', '--model', model], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const flags = ['serve', '--model', model];
+    if (batchPrefill) flags.push('--batch-prefill');
+    const proc = managed(exe, flags, { stdio: ['pipe', 'pipe', 'pipe'] });
     proc.child.stdin.on('error', () => {});
     const reader = createInterface({ input: proc.child.stdout })[Symbol.asyncIterator]();
     try {
@@ -89,6 +129,9 @@ async function sparkSession(exe, model) {
     } catch (error) { await proc.stop(); throw error; }
     return {
         load_ms: performance.now() - launch,
+        pid: proc.child.pid,
+        configuration: 'Packed GGUF CUDA, FP32 KV, graphs off, ' +
+            (batchPrefill ? '128-token projection batches' : 'serial prefill'),
         stop: proc.stop,
         async trial(prompt, sensor) {
             const payload = prompt.join(',');
@@ -140,6 +183,7 @@ async function llamaSession(exe, model, device) {
     const offloaded = Number(proc.logs.match(/offloaded (\d+)\/\1 layers to GPU/)[1]);
     return {
         load_ms: performance.now() - launch,
+        pid: proc.child.pid,
         configuration: flags.slice(flags.indexOf('--device')).join(' '),
         offloaded_layers: offloaded,
         stop: proc.stop,
@@ -182,9 +226,10 @@ async function llamaSession(exe, model, device) {
 
 async function main() {
     const [, , spark, llama, model, out, ...options] = process.argv;
-    if (!spark || !llama || !model || !out || options.some(x => x !== '--smoke'))
-        throw new Error('usage: node compare_cuda.cjs SPARK_EXE LLAMA_SERVER_EXE GGUF OUT [--smoke]');
+    if (!spark || !llama || !model || !out || options.some(x => !['--smoke', '--primary', '--batch-prefill'].includes(x)))
+        throw new Error('usage: node compare_cuda.cjs SPARK_EXE LLAMA_SERVER_EXE GGUF OUT [--smoke|--primary] [--batch-prefill]');
     const smoke = options.includes('--smoke');
+    const batchPrefill = options.includes('--batch-prefill');
     const { stdout: idsText } = await exec(spark, ['tokenize', '--model', model, '--prompt', passage.repeat(32)]);
     const ids = JSON.parse(idsText);
     if (ids.length < contexts.at(-1)) throw new Error('primary prompt is too short');
@@ -199,23 +244,26 @@ async function main() {
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(model)) hash.update(chunk);
     const report = { kind: 'head-to-head', runtime: 'SPARK vs llama.cpp', smoke,
+        recorded_at: new Date().toISOString(),
         model_sha256: hash.digest('hex'), hardware: gpu.trim(), power_mode: powerMode,
+        host: {os: release(), cpu: cpus()[0].model, logical_cpus: cpus().length, ram_bytes: totalmem()},
+        cuda_toolkit: (await exec('nvcc', ['--version']).catch(() => ({stdout: null}))).stdout?.trim() ?? null,
         context: 2048, warmups: smoke ? 0 : warmups, measured: smoke ? 1 : measured,
         output_tokens: outputTokens, spark_commit: head.trim(), llama_version: (version + versionError).trim(),
-        timing: 'Client-observed first-to-last token delivery through local SPARK IPC and llama.cpp loopback SSE. First token starts before each request. Prefill uses each engine’s timer.',
+        timing: 'Client-observed first-to-last token delivery through local SPARK IPC and llama.cpp loopback SSE. First token starts before each request. Prefill uses the internal engine timer.',
         workloads: [] };
     // Run one GPU process at a time. Reverse order for the middle context.
-    for (const length of smoke ? [128] : contexts) {
+    for (const length of smoke ? [128] : options.includes('--primary') ? [512] : contexts) {
         const prompt = ids.slice(0, length);
         const group = { prompt_tokens: length, prompt_token_ids: prompt, engines: {} };
         const order = length === 512 ? ['llama_cpp', 'spark'] : ['spark', 'llama_cpp'];
         for (const name of order) {
-            const session = await (name === 'spark' ? sparkSession(spark, model) : llamaSession(llama, model, match[1]));
+            const session = await (name === 'spark' ? sparkSession(spark, model, batchPrefill) : llamaSession(llama, model, match[1]));
             let sensor;
             try {
-                sensor = telemetry();
+                sensor = telemetry(session.pid);
                 const trials = [];
-                await delay(160);
+                await delay(800);
                 for (let i = 0; i < report.warmups + report.measured; i++) {
                     const result = await session.trial(prompt, sensor);
                     trials.push({...result, run: i + 1, warmup: i < report.warmups,
@@ -225,7 +273,7 @@ async function main() {
                 }
                 group.engines[name] = {load_ms: session.load_ms, trials, metrics: summarize(trials),
                     offloaded_layers: session.offloaded_layers,
-                    configuration: session.configuration || 'Packed Q4_K_M CUDA, FP32 KV, graphs off'};
+                    configuration: session.configuration};
             } finally {
                 if (sensor) await sensor.stop();
                 await session.stop();
@@ -235,6 +283,9 @@ async function main() {
         const b = group.engines.llama_cpp.trials[report.warmups].generated_token_ids;
         const conflict = a.findIndex((id, index) => id !== b[index]);
         group.greedy_prefix_match = conflict === -1 ? outputTokens : conflict;
+        group.matching_trials = group.engines.spark.trials.slice(report.warmups).filter((trial, i) =>
+            trial.generated_token_ids.every((id, j) =>
+                id === group.engines.llama_cpp.trials[report.warmups + i].generated_token_ids[j])).length;
         report.workloads.push(group);
         await writeFile(out + '.tmp', JSON.stringify(report) + '\n');
         await rename(out + '.tmp', out);
