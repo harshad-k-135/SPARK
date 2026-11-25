@@ -23,7 +23,7 @@ $('generation').addEventListener('submit', async event => {
   controller = new AbortController();
   $('send').disabled = true;
   $('stop').hidden = false;
-  for (const id of ['ttft', 'decode', 'generated']) $(id).textContent = '—';
+  for (const id of ['ttft', 'prefill', 'decode', 'generated']) $(id).textContent = '—';
   $('text').textContent = '';
   $('generation-state').textContent = 'Starting';
   const utf8 = new TextDecoder();
@@ -42,9 +42,13 @@ $('generation').addEventListener('submit', async event => {
     const reader = response.body.getReader();
     const handle = line => {
       const message = JSON.parse(line);
-      if (message.event === 'loading') $('generation-state').textContent = 'Preparing CUDA';
+      if (message.event === 'loading') {
+        $('generation-state').textContent = 'Preparing CUDA';
+        refreshStatus();
+      }
       if (message.event === 'token') {
         $('generation-state').textContent = 'Generating';
+        $('device').textContent = 'CUDA \u00b7 Streaming';
         const chunks = message.bytes.match(/../g) || [];
         $('text').append(tokens.decode(Uint8Array.from(chunks, chunk => parseInt(chunk, 16)), {stream: true}));
       }
@@ -53,6 +57,8 @@ $('generation').addEventListener('submit', async event => {
         ended = true;
         $('text').append(tokens.decode());
         $('ttft').textContent = message.generated_tokens ? format(message.first_token_ms, 0) + ' ms' : '—';
+        $('prefill').textContent = message.prefill_ms > 0
+           ? format(message.prompt_tokens * 1000 / message.prefill_ms) + ' t/s' : '—';
         $('decode').textContent = message.generated_tokens > 1 ? format(message.decode_tokens_per_sec) + ' t/s' : '—';
         $('generated').textContent = String(message.generated_tokens);
         $('generation-state').textContent = 'Complete';
@@ -82,6 +88,7 @@ $('generation').addEventListener('submit', async event => {
 $('stop').addEventListener('click', () => controller?.abort());
 
 function benchmarkLabel(report) {
+  if (report.runtime === 'spark-qwen-tuned') return 'Tuned CUDA worker';
   if (report.runtime === 'spark-qwen-graph-bucket') return 'Bucketed CUDA Graph';
   if (report.runtime === 'spark-qwen-graph-single') return 'Single CUDA Graph';
   if (report.runtime === 'spark-qwen-packed') return 'Packed GGUF CUDA';
@@ -143,12 +150,27 @@ function renderDetails() {
       row.insertCell().textContent = value;
   }
   const raw = document.createElement('a');
-  raw.href = '/runs/' + encodeURIComponent(selected.id);
-  raw.textContent = 'Raw trial data';
+  raw.href = '/runs/' + encodeURIComponent(selected.id) + '?download=true';
+  raw.textContent = 'Export JSON';
   raw.target = '_blank';
   raw.rel = 'noopener';
   raw.className = 'raw';
   container.append(table, raw);
+  if (/^[a-f0-9]{32}$/.test(selected.id)) {
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'delete-native-run';
+    remove.textContent = 'Delete run';
+    remove.addEventListener('click', async () => {
+      if (!confirm('Delete this saved benchmark run?')) return;
+      try {
+        const response = await fetch('/runs/' + encodeURIComponent(selected.id), {method: 'DELETE'});
+        if (!response.ok) throw Error((await response.json()).detail || 'Could not delete this run.');
+        await refreshRuns();
+      } catch (error) { $('benchmark-state').textContent = error.message; }
+    });
+    container.append(remove);
+  }
 }
 
 async function refreshRuns() {
@@ -207,3 +229,26 @@ $('benchmark').addEventListener('submit', async event => {
 
 refreshStatus();
 refreshRuns().catch(error => { $('benchmark-state').textContent = error.message; });
+
+
+async function loadExperiments() {
+  const response = await fetch('/api/experiments');
+  if (!response.ok) throw Error('Experiment history is unavailable.');
+  const experiments = await response.json();
+  const table = $('experiment-rows');
+  table.replaceChildren();
+  for (const item of experiments) {
+    const row = table.insertRow();
+    const link = document.createElement('a');
+    link.href = '/runs/' + encodeURIComponent(item.id) + '?download=true';
+    link.textContent = item.label;
+    row.insertCell().append(link);
+    for (const [key, unit] of [
+      ['first_token_ms', ' ms'], ['prefill_tokens_per_sec', ' tok/s'],
+      ['decode_tokens_per_sec', ' tok/s'], ['peak_vram_mib', ' MiB'],
+    ]) row.insertCell().textContent = format(item.metrics[key]?.median) + unit;
+  }
+  if (!experiments.length) $('experiment-status').textContent = 'No archived experiment trials found.';
+}
+
+loadExperiments().catch(error => { $('experiment-status').textContent = error.message; });

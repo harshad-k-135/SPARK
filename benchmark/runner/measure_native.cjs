@@ -42,6 +42,13 @@ async function main() {
         '--warmups', String(warmups), '--trials', String(measured), '--cuda-graph', graph,
     ];
     if (process.env.SPARK_CUDA_WEIGHTS) args.push('--cuda-weights', weights);
+    const switches = [
+        ['SPARK_BATCH_PREFILL', '--batch-prefill'], ['SPARK_Q6_BLOCK_GEMV', '--q6-block-gemv'],
+        ['SPARK_FP16_PREFILL', '--fp16-prefill'], ['SPARK_Q4_BLOCK_GEMV', '--q4-block-gemv'],
+    ];
+    for (const [setting, flag] of switches) {
+        if (process.env[setting] === '1') args.push(flag);
+    }
     const { stderr } = await execute(spark, args, { timeout: 1800000 });
     const events = stderr.trim().split(/\r?\n/).filter(line => line.startsWith('{')).map(JSON.parse);
     const trials = events.filter(row => row.event === 'generation_timings');
@@ -55,7 +62,8 @@ async function main() {
         return [field, { median: quantile(data, 0.5), iqr: quantile(data, 0.75) - quantile(data, 0.25),
             p95: quantile(data, 0.95) }];
     }));
-    const runtime = weights === 'packed' ? 'spark-qwen-packed' :
+    const runtime = process.env.SPARK_BATCH_PREFILL === '1' ? 'spark-qwen-tuned' :
+        weights === 'packed' ? 'spark-qwen-packed' :
         graph === 'off' ? 'spark-qwen-v0' : 'spark-qwen-graph-' + graph;
     const report = { runtime,
         commit: commit.trim(), hardware: hardware.trim(),

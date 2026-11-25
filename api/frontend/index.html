@@ -15,6 +15,9 @@
     <div id="device" class="badge">Connecting</div>
   </header>
   <main>
+    <nav class="workspace-nav" aria-label="Dashboard sections">
+      <a href="#match-title">Comparison</a><a href="#live">Live inference</a><a href="#experiments">Tuning history</a><a href="#pipeline">Pipeline</a>
+    </nav>
     <section class="match" aria-labelledby="match-title">
       <div class="match-top">
         <div>
@@ -27,6 +30,7 @@
       <p id="compare-state" role="status"></p>
       <div id="compare-body" hidden>
         <div class="compare-controls">
+          <div class="history-select"><label for="comparison-history">Comparison run</label><select id="comparison-history"></select></div>
           <fieldset><legend>Prompt length</legend><div id="context-options" class="segments"></div></fieldset>
           <fieldset><legend>Metric</legend><div id="metric-options" class="segments"></div></fieldset>
         </div>
@@ -43,12 +47,24 @@
             <p id="trial-detail" class="note" aria-live="polite"></p>
           </div>
         </div>
-        <div class="match-footer"><span id="protocol"></span><a id="compare-evidence">Raw data and telemetry</a></div>
+        <div class="match-footer">
+          <span id="protocol"></span>
+          <div class="evidence-actions"><a id="compare-evidence">Export JSON</a><button id="delete-comparison" type="button" hidden>Delete run</button></div>
+        </div>
+        <p id="runtime-config" class="note"></p>
+        <details id="monitor" class="score-card">
+          <summary>GPU monitoring for selected trial</summary>
+          <div class="monitor-grid">
+            <div><h3>Board utilization</h3><canvas id="monitor-util" width="560" height="148" role="img" aria-label="Sampled GPU utilization over time"></canvas></div>
+            <div><h3>Board memory</h3><canvas id="monitor-memory" width="560" height="148" role="img" aria-label="Sampled GPU memory over time"></canvas></div>
+          </div>
+          <p class="note" id="monitor-state" role="status"></p>
+        </details>
       </div>
     </section>
     <div class="intro">
       <div>
-        <h2>Local inference</h2>
+        <h2 id="live">Local inference</h2>
         <p>Qwen3.5 0.8B · Q4_K_M GGUF</p>
       </div>
       <p id="model" class="model"></p>
@@ -70,20 +86,21 @@
           <pre id="text" aria-live="polite"></pre>
           <dl class="metrics">
             <div><dt>First token</dt><dd id="ttft">—</dd></div>
+            <div><dt>Prefill</dt><dd id="prefill">&#8212;</dd></div>
             <div><dt>Decode</dt><dd id="decode">—</dd></div>
             <div><dt>Tokens</dt><dd id="generated">—</dd></div>
           </dl>
         </div>
       </section>
       <section class="panel">
-        <div class="heading"><h2>SPARK tuning</h2><p>512 prompt · 128 output</p></div>
+        <div class="heading"><h2 id="tuning">SPARK tuning</h2><p>512 prompt · 128 output</p></div>
         <div class="comparison">
           <h3>Median decode tokens/sec</h3>
           <div id="chart"></div>
         </div>
         <form id="benchmark" class="benchmark">
           <div><label for="mode">Runtime configuration</label>
-            <select id="mode"><option value="packed">Packed GGUF CUDA</option><option value="bucket">Bucketed CUDA Graph</option><option value="baseline">SPARK baseline</option></select>
+            <select id="mode"><option value="optimized">Tuned CUDA worker</option><option value="packed">Packed GGUF CUDA</option><option value="bucket">Bucketed CUDA Graph</option><option value="baseline">SPARK FP32 baseline</option></select>
           </div>
           <button id="run" type="submit">Run benchmark</button>
         </form>
@@ -93,6 +110,23 @@
         <div id="details"></div>
       </section>
     </div>
+    <section id="experiments" class="panel pipeline">
+      <div class="heading"><h2>Measured optimization history</h2><p>512 prompt tokens, 128 generated</p></div>
+      <div class="experiments-table"><table>
+        <thead><tr><th scope="col">Experiment</th><th scope="col">Median TTFT</th><th scope="col">Median prefill</th><th scope="col">Median decode</th><th scope="col">Peak VRAM</th></tr></thead>
+        <tbody id="experiment-rows"></tbody>
+      </table></div>
+      <p id="experiment-status" class="note" role="status"></p>
+    </section>
+    <section id="pipeline" class="panel pipeline">
+      <div class="heading"><h2>Execution pipeline</h2><p>One sequence on one CUDA stream</p></div>
+      <ol>
+        <li><span>Host</span><strong>GGUF + byte BPE</strong><p>Validate tensors and encode prompt tokens.</p></li>
+        <li><span>Device</span><strong>Prefill</strong><p>Process the prompt and populate recurrence and attention state.</p></li>
+        <li><span>Device</span><strong>Decode</strong><p>Run 18 Gated DeltaNet and six grouped-query attention blocks per token.</p></li>
+        <li><span>Host</span><strong>Sample + stream</strong><p>Read logits, select a token, and deliver UTF-8 output.</p></li>
+      </ol>
+    </section>
   </main>
 </body>
 </html>

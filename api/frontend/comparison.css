@@ -43,3 +43,29 @@ body{min-height:100vh;background:radial-gradient(ellipse at 88% 0,#321d5177,tran
 .match-footer a{color:#92f2d9}
 @media(max-width:750px){.match-top{flex-wrap:wrap}.match-grid{grid-template-columns:1fr}.compare-button{margin-top:0}}
 @media(prefers-reduced-motion:reduce){.compare-fill{transition:none}}
+.history-select select{min-width:13rem;max-width:100%}
+.compare-controls .history-select label{display:block;color:#b9ccee;font-size:.875rem;margin-bottom:.35rem}
+.evidence-actions{display:flex;align-items:center;gap:.75rem}
+#monitor{margin-top:1rem}
+#monitor summary{cursor:pointer;color:#b9ccee;font-weight:650}
+.monitor-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:.8rem 0 .45rem}
+.monitor-grid h3{font-size:.9rem;margin:0 0 .35rem}
+.monitor-grid canvas{display:block;width:100%;height:auto}
+@media(max-width:750px){.monitor-grid{grid-template-columns:1fr}}
+.workspace-nav{display:flex;flex-wrap:wrap;gap:.52rem;margin:0 0 1rem}
+.workspace-nav a{color:#c3d3ed;background:#15223b;border:1px solid #374968;border-radius:1.4rem;text-decoration:none;padding:.4rem .85rem;font-size:.875rem}
+.workspace-nav a:hover,.workspace-nav a:focus-visible{background:#233f52;color:#b2ffee}
+.pipeline{margin-top:1.3rem}
+.pipeline ol{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(4,1fr);gap:.85rem}
+.pipeline li{border:1px solid #394c71;background:#0c172a;padding:.85rem;border-radius:.62rem}
+.pipeline span,.pipeline strong{display:block;margin-bottom:.35rem}
+.pipeline span{font-size:.75rem;text-transform:uppercase;letter-spacing:.09em;color:var(--mint)}
+.pipeline p{font-size:.9rem;color:var(--muted)}
+.metrics{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:700px){.pipeline ol,.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.experiments-table{overflow:auto}
+.experiments-table td{white-space:nowrap}
+.experiments-table a{color:var(--mint)}
+.history-select{flex:0 1 23rem;min-width:0;max-width:100%}
+.history-select select{min-width:0}
+.delete-native-run{margin-left:.7rem;padding:.23rem .55rem;font-size:.82rem}
