@@ -12,7 +12,7 @@
 | Native Qwen CUDA generation | Smoke passed | CUDA generated `4` on the RTX 3050 from the supplied GGUF. The arena used 3,088,575,744 bytes at 2,048 context. Fixed-seed CUDA operation tests passed. |
 | 2 — Qwen CUDA parity and baseline | Passed | All 20 first tokens and 1,280 continuation IDs matched. Maximum first-step logit-gap error was 0.001081. Baseline and profiler evidence recorded below. |
 | 3 — Optimized Qwen decode | Passed | Packed GGUF CUDA raised median native decode throughput from 40.46 to 51.21 tokens/sec. The bucketed graph variant reached 46.08. Both passed full parity. |
-| 4 — GPU comparison and control API | Partial | The native FastAPI dashboard served its assets and streamed output from the RTX 3050. The installed external CUDA binary enumerates zero usable GPU devices. |
+| 4 — GPU comparison and control API | Partial | The dashboard streams native CUDA output. The repaired llama.cpp build detected the RTX 3050 and offloaded all 26 layers. Matched trials are pending. |
 
 Target file `Qwen_Qwen3.5-0.8B-Q4_K_M.gguf`, SHA-256
 `fb044e93939a70469c905781334f5de1e6c8b608ced6cbc8c9249bd4127d9526`.
@@ -26,6 +26,12 @@ The first Q6_K embedding row decoded to finite values from `-0.0759277` to
 The recorded [external Qwen API smoke test](../benchmark/results/qwen-local-smoke/02-qwen-api.png)
 ran on CPU. Live SPARK frontend captures and a matched llama.cpp GPU
 comparison remain pending.
+
+The staged b10159 build (`f95de9776`) detected the RTX 3050 as `CUDA0`
+after installing the official CUDA 13.3 runtime bundle beside its binaries.
+`llama-cli.exe` offloaded all 26 reported layers, returned `4` for the
+arithmetic prompt, and exited with code zero.
+[GPU smoke output](../benchmark/results/qwen-local-smoke/llama-cuda-enumeration.json)
 
 [Sandbox verification chart](../benchmark/results/qwen-local-smoke/native-qwen-coverage.svg)
 

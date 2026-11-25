@@ -1,0 +1,7 @@
+{
+  "exit_code": 0,
+  "gpu": "NVIDIA GeForce RTX 3050 6GB Laptop GPU",
+  "offloaded_layers": 26,
+  "total_layers": 26,
+  "reply": "4"
+}

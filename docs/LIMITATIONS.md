@@ -9,6 +9,6 @@ The model scope is text-only, batch one, one RTX 3050, and up to 4,096 tokens.
 Vision and the auxiliary multi-token prediction block are outside the
 initial implementation scope.
 
-The installed llama.cpp binary could not access the RTX 3050, so there is
-no matched external GPU comparison. The browser launch was denied inside
-the sandbox, so live dashboard screenshots are unavailable there.
+The staged llama.cpp build passed GPU enumeration and full offload. Matched
+external GPU trials are pending. Windows denied browser launch inside the
+sandbox, so live dashboard screenshots are unavailable there.
