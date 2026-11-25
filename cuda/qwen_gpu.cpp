@@ -171,7 +171,7 @@ struct Layer {
 
 struct Kernels {
     CUfunction rms, residual, swiglu, convolve, delta, norm_rope, cache_kv, scores, read_attention;
-    CUfunction packed_matvec, packed_embedding, unpack_matrix, q6_block_matvec, unpack_matrix_half, to_half;
+    CUfunction packed_matvec, packed_embedding, unpack_matrix, q6_block_matvec, unpack_matrix_half, to_half, q4_block_matvec;
     explicit Kernels(const Module& module)
         : rms(module.get("rms")), residual(module.get("residual")), swiglu(module.get("swiglu")),
           convolve(module.get("convolve")), delta(module.get("delta")),
@@ -179,7 +179,8 @@ struct Kernels {
           scores(module.get("scores")), read_attention(module.get("read_attention")),
           packed_matvec(module.get("packed_matvec")), packed_embedding(module.get("packed_embedding")),
           unpack_matrix(module.get("unpack_matrix")), q6_block_matvec(module.get("q6_block_matvec")),
-          unpack_matrix_half(module.get("unpack_matrix_half")), to_half(module.get("to_half")) {}
+          unpack_matrix_half(module.get("unpack_matrix_half")), to_half(module.get("to_half")),
+          q4_block_matvec(module.get("q4_block_matvec")) {}
 };
 
 constexpr int hidden = 1024, width = 3584, vocab = 248320;
@@ -230,16 +231,16 @@ struct GpuModel::Impl {
     int emitted = 0;
     DecodeGraph graph_mode;
     PrefillBuffers prefill_buffers{};
-    bool q6_block_gemv;
+    bool q6_block_gemv, q4_block_gemv;
     std::unique_ptr<Blas> prefill_blas;
     CUdeviceptr half_input = 0;
     CUdeviceptr cursor = 0;
     float eps = 0, base = 0;
 
     Impl(const Gguf& gguf, const std::filesystem::path& path, std::size_t context, bool trace,
-         DecodeGraph mode, bool packed, bool batch_prefill, bool use_q6_block_gemv, bool fp16_prefill)
+         DecodeGraph mode, bool packed, bool batch_prefill, bool use_q6_block_gemv, bool fp16_prefill, bool use_q4_block_gemv)
         : profile(trace), capacity(static_cast<int>(context)), graph_mode(mode),
-          q6_block_gemv(use_q6_block_gemv) {
+          q6_block_gemv(use_q6_block_gemv), q4_block_gemv(use_q4_block_gemv) {
         validate(gguf, context);
         if (fp16_prefill && (!packed || !batch_prefill))
             throw std::invalid_argument("FP16 prefill needs packed weights and batched prefill");
@@ -370,14 +371,15 @@ struct GpuModel::Impl {
     }
 
     void mv(const Matrix& m, CUdeviceptr in, CUdeviceptr out) {
-        if (m.type == 14 && q6_block_gemv) {
-            launch(kernel.q6_block_matvec, (m.rows + 3) / 4, 1, 128, m.data, in, out,
-                   m.cols, m.rows, m.bytes);
-            return;
-        }
         if (m.type != 0) {
-            launch(kernel.packed_matvec, (m.rows + 3) / 4, 1, 128, m.data, in, out,
-                   m.cols, m.rows, m.bytes, m.type);
+            const auto blocks = (m.rows + 3) / 4;
+            const auto specialized = m.type == 14 && q6_block_gemv ? kernel.q6_block_matvec
+                                   : m.type == 12 && q4_block_gemv ? kernel.q4_block_matvec : nullptr;
+            if (specialized)
+                launch(specialized, blocks, 1, 128, m.data, in, out, m.cols, m.rows, m.bytes);
+            else
+                launch(kernel.packed_matvec, blocks, 1, 128, m.data, in, out,
+                       m.cols, m.rows, m.bytes, m.type);
             return;
         }
         const float one = 1, zero = 0;
@@ -585,9 +587,9 @@ struct GpuModel::Impl {
 };
 
 GpuModel::GpuModel(const Gguf& gguf, const std::filesystem::path& path, std::size_t context,
-                   bool profile, DecodeGraph graph, bool packed, bool batch_prefill, bool q6_block_gemv, bool fp16_prefill)
+                   bool profile, DecodeGraph graph, bool packed, bool batch_prefill, bool q6_block_gemv, bool fp16_prefill, bool q4_block_gemv)
     : impl_(std::make_unique<Impl>(gguf, path, context, profile, graph, packed, batch_prefill,
-                                   q6_block_gemv, fp16_prefill)) {}
+                                   q6_block_gemv, fp16_prefill, q4_block_gemv)) {}
 GpuModel::~GpuModel() = default;
 void GpuModel::reset() { impl_->reset(); }
 std::span<const float> GpuModel::prefill(std::span<const TokenId> tokens) { return impl_->prefill(tokens); }
@@ -684,20 +686,39 @@ void test_qwen_cuda_ops() {
             run(kernel.packed_matvec, 2, 1, 128, weights_gpu, x_gpu, output, columns, rows,
                 static_cast<int>(row_bytes), type);
             std::array<float, rows> expected{};
-            std::array<float, columns> row{};
+            std::array<float, rows * columns> dense{};
             for (std::size_t r = 0; r < rows; ++r) {
+                auto row = std::span(dense).subspan(r * columns, columns);
                 unpack_gguf_row(type, std::span(packed).subspan(r * row_bytes, row_bytes), row);
                 expected[r] = dot(x, row);
             }
+            const auto dense_gpu = arena.allocate(dense.size() * sizeof(float));
+            run(kernel.unpack_matrix, 4, rows, 256, weights_gpu, dense_gpu,
+                columns, static_cast<int>(row_bytes), type);
+            expect("FP32 unpacked prefill layout", dense_gpu, dense);
+            std::array<std::uint8_t, rows * columns * 2> half_bytes{};
+            std::array<float, rows * columns> rounded{};
+            const auto half_gpu = arena.allocate(half_bytes.size());
+            run(kernel.unpack_matrix_half, 4, rows, 256, weights_gpu, half_gpu,
+                columns, static_cast<int>(row_bytes), type);
+            SPARK_CUDA(cuStreamSynchronize(stream.value));
+            SPARK_CUDA(cuMemcpyDtoH(half_bytes.data(), half_gpu, half_bytes.size()));
+            unpack_gguf_row(1, half_bytes, rounded);
+            for (std::size_t i = 0; i < dense.size(); ++i) {
+                const float tolerance = 0.0005F * std::abs(dense[i]) + 1e-6F;
+                if (!std::isfinite(rounded[i]) || std::abs(rounded[i] - dense[i]) > tolerance)
+                    throw std::runtime_error("incorrect FP16 unpacked prefill value");
+            }
             expect("packed GPU projection", output, expected, 1e-2F);
-            if (type == 14) {
-                run(kernel.q6_block_matvec, 2, 1, 128, weights_gpu, x_gpu, output, columns, rows, row_bytes);
-                expect("block Q6_K projection", output, expected, 1e-2F);
+            if (type == 12 || type == 14) {
+                const auto specialized = type == 12 ? kernel.q4_block_matvec : kernel.q6_block_matvec;
+                run(specialized, 2, 1, 128, weights_gpu, x_gpu, output, columns, rows,
+                    static_cast<int>(row_bytes));
+                expect("specialized packed projection", output, expected, 1e-2F);
             }
             const auto embedding = arena.allocate(columns * sizeof(float));
             run(kernel.packed_embedding, 4, 1, 256, weights_gpu, embedding, type);
-            unpack_gguf_row(type, std::span(packed).first(row_bytes), row);
-            expect("packed GPU embedding", embedding, row);
+            expect("packed GPU embedding", embedding, std::span(dense).first(columns));
         }
     }
     {

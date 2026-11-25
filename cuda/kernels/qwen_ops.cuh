@@ -233,6 +233,38 @@ extern "C" __global__ void q6_block_matvec(const unsigned char* data, const floa
     if (lane == 0) y[r] = sum;
 }
 
+// Four warps compute four Q4_K output rows. A lane reads one packed byte
+// for two successive products, reusing the block multiplier and minimum.
+extern "C" __global__ void q4_block_matvec(const unsigned char* data, const float* x,
+                                            float* y, int cols, int rows, int bytes) {
+    const int lane = threadIdx.x % 32;
+    const int r = blockIdx.x * 4 + threadIdx.x / 32;
+    if (r >= rows) return;
+    const auto* row = data + static_cast<unsigned long long>(r) * bytes;
+    float sum = 0;
+    for (int block = 0; block < cols / 256; ++block) {
+        const auto* p = row + block * 144;
+        const float d = block_half(p), minimum = block_half(p + 2);
+        const auto* scales = p + 4;
+        #pragma unroll
+        for (int pair = 0; pair < 4; ++pair) {
+            const int packed = p[16 + pair * 32 + lane];
+            #pragma unroll
+            for (int nibble = 0; nibble < 2; ++nibble) {
+                const int group = pair * 2 + nibble;
+                const int ds = group < 4 ? (scales[group] & 63)
+                    : ((scales[group + 4] & 15) | ((scales[group - 4] >> 6) << 4));
+                const int ms = group < 4 ? (scales[group + 4] & 63)
+                    : ((scales[group + 4] >> 4) | ((scales[group] >> 6) << 4));
+                const int q = (packed >> (4 * nibble)) & 15;
+                sum += (d * ds * q - minimum * ms) * x[block * 256 + group * 32 + lane];
+            }
+        }
+    }
+    for (int i = 16; i; i /= 2) sum += __shfl_down_sync(0xffffffff, sum, i);
+    if (lane == 0) y[r] = sum;
+}
+
 // One 256-lane block writes a contiguous stripe of an unpacked matrix row.
 extern "C" __global__ void unpack_matrix(const unsigned char* data, float* output,
                                           int cols, int bytes, int type) {

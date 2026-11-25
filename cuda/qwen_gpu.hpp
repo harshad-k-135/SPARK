@@ -15,7 +15,7 @@ public:
     GpuModel(const Gguf& gguf, const std::filesystem::path& path, std::size_t context,
              bool profile = false, DecodeGraph graph = DecodeGraph::off, bool packed = false,
              bool batch_prefill = false, bool q6_block_gemv = false,
-             bool fp16_prefill = false);
+             bool fp16_prefill = false, bool q4_block_gemv = false);
     ~GpuModel();
     void reset();
     std::span<const float> prefill(std::span<const TokenId> tokens);
