@@ -1,0 +1,5 @@
+========= COMPUTE-SANITIZER
+CUDA Qwen operation tests passed
+========= LEAK SUMMARY: 0 bytes leaked in 0 allocations
+========= ERROR SUMMARY: 0 errors
+Sanitizer exit code: 0

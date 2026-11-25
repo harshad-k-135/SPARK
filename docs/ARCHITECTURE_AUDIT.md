@@ -90,3 +90,9 @@ experiment, then causal attention and recurrence work.
 
 [Kernel totals](../benchmarks/prefill-profile-kernels.csv) |
 [Nsight capture](profiles/spark-packed-prefill.nsys-rep)
+
+An ungraphed tuned diagnostic at 512 input tokens attributed 6.68 ms to
+recurrent layers, 2.97 ms to MLP, 2.17 ms to grouped-query attention blocks,
+and 1.42 ms to the output projection and final norm for one decode token.
+The profile instruments the launch sequence and has a different boundary
+from the production timing. [Tuned CUDA events](../benchmarks/verification/tuned-cuda-events.jsonl)

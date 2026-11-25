@@ -154,3 +154,55 @@ full outputs, and each runtime's cold-load timing.
 [Raw trials](../benchmark/results/spark-vs-llama-cuda.json)
 · [Decode dashboard capture](../benchmark/results/dashboard/spark-dashboard-decode.png)
 · [VRAM dashboard capture](../benchmark/results/dashboard/spark-dashboard-vram.png)
+
+## Optimized Qwen runtime on the RTX 3050
+
+SPARK commit `77358ec` used packed weights with 128-token FP32 projection
+batches, bucketed decode graphs, and specialized Q4_K and Q6_K GEMV.
+llama.cpp b10159 (`f95de9776`) offloaded all 26 reported layers. Both used
+the same Qwen3.5-0.8B Q4_K_M GGUF and FP32 KV. Hardware was the RTX 3050 6 GB
+Laptop GPU and Intel Core i5-13450HX under Windows build 26300, NVIDIA driver
+596.08, CUDA Toolkit 12.8.61 for SPARK and the CUDA 13.3 companion runtime
+for llama.cpp. Windows was on AC under Balanced power mode.
+
+Medians from five warm-ups and ten measured trials per runtime and task.
+Each trial generated 128 forced greedy tokens at context size 2,048.
+
+| Prompt tokens | Runtime | TTFT (ms) | Prefill (tok/s) | Decode (tok/s) | Total (ms) | Peak VRAM (MiB) | Peak process RAM (MiB) | Board GPU use |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 128 | SPARK tuned | 227.99 | 566.17 | 117.77 | 1,306.06 | 753 | 427.41 | 76.33% |
+| 128 | llama.cpp | 98.02 | 1,349.10 | 124.65 | 1,121.55 | 761 | 1,146.70 | 68.09% |
+| 512 | SPARK serial control | 6,969.26 | 73.48 | 50.29 | 9,504.01 | 683 | 384.97 | 97.66% |
+| 512 | SPARK tuned | 838.72 | 611.92 | 111.18 | 1,981.90 | 753 | 427.02 | 73.50% |
+| 512 | llama.cpp | 144.40 | 3,618.39 | 121.65 | 1,185.59 | 761 | 1,148.61 | 72.55% |
+| 1,024 | SPARK tuned | 1,781.93 | 575.33 | 103.24 | 3,014.95 | 753 | 427.25 | 82.42% |
+| 1,024 | llama.cpp | 247.59 | 4,187.84 | 117.59 | 1,327.34 | 761 | 1,168.61 | 72.88% |
+
+The 512-token tuned path delivered 2.21x SPARK's baseline decode throughput
+and 88.0% lower first-token latency. In a separate repeat, SPARK measured
+111.10 tok/s, 844.20 ms TTFT and 1,986.87 ms total median latency.
+The corresponding llama.cpp repeat measured 124.53 tok/s, 142.81 ms and
+1,162.57 ms. P95 total latency in the full run was 2,001.16 ms for SPARK
+and 1,203.22 ms for llama.cpp at 512 tokens. SPARK delivered 94.5% of the
+llama.cpp median decode speed at 128 prompt tokens. llama.cpp led the
+speed metrics across the three matched workloads. SPARK used 8 MiB less
+sampled peak board memory and approximately 63% less sampled process RAM
+at the primary workload.
+
+The final configured model matched the reference on all 20 golden prompts,
+including the 1,500-token prompt, and matched all 1,280 continuation IDs.
+Maximum first-token logit-gap error was 0.040231 against the expanded FP32
+reference. An independent native CPU/CUDA case matched 16/16 tokens and
+all 248,320 first-step logits within 0.0000161 absolute error. Across the
+main final comparison plus its independent repeat, all 5,120 emitted
+token IDs matched llama.cpp. A 4,096-token stress test matched between
+fresh launches and rejected an over-limit input. Compute Sanitizer found
+zero errors and zero leaked bytes in the CUDA operation suite.
+
+[Detailed statistics](../benchmarks/optimized-q4.md) |
+[Historical baseline](../benchmarks/baseline.md) |
+[Final raw trials](../benchmarks/optimized-q4.json) |
+[Independent repeat](../benchmarks/optimized-q4-repeat-primary.json) |
+[Native parity and memory tests](../benchmarks/verification/) |
+[Protocol](BENCHMARKING.md) |
+[Showcase](showcase/README.md)

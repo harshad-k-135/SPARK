@@ -114,3 +114,34 @@ variation. The same-session llama.cpp medians were 136.64 ms TTFT,
 [Raw trials](experiments/fp16-prefill-primary.json) |
 [Golden evidence](experiments/fp16-prefill-golden.jsonl) |
 [FP32 prefill CUDA trace totals](prefill-profile-kernels.csv)
+
+## D03 - Reuse packed Q4_K nibbles in decode
+
+- Bottleneck and hypothesis. The packed baseline spent 7.48 ms in MLP
+  stages in a profiled decode step. The inventory shows Q4_K in its
+  up and gate matrices. Reusing each packed byte for both of its
+  nibbles and each block multiplier across the loop should reduce
+  decode time.
+- Change. `cuda/kernels/qwen_ops.cuh` and `cuda/qwen_gpu.cpp` add
+  a Q4_K-only warp kernel with the existing FP32 accumulation order.
+  Q6_K, graph mode and FP32 chunked prefill are identical in both arms.
+  The runner and CLI add an independent `--q4-block-gemv` switch.
+- Correctness. CUDA projection and layout unit tests passed. The 20-prompt
+  gate matched 1,280/1,280 greedy IDs. Maximum first-step logit-gap
+  error was 0.040231. All ten scored output pairs matched.
+- Results. Against the Q6-only repeat at 512 input tokens, decode rose from
+  68.57 to 111.06 tok/s (+62.0%), P95 decode latency fell from 1,877.07 to
+  1,150.19 ms (-38.7%), and median total latency fell from 2,664.66 to
+  1,989.21 ms (-25.3%). TTFT moved from 816.39 to 849.63 ms, +4.1% between
+  sessions. The new kernel changes single-token projections, including the
+  final prefill token. Peak board VRAM stayed at 753 MiB. Peak process
+  working set moved from 427.40 to 427.02 MiB.
+- Decision **KEEP**. An independent final session reproduced 111.10 tok/s
+  at this prompt length. llama.cpp measured 121.65 tok/s in the full
+  final run and 124.53 tok/s in its independent repeat.
+
+[Raw candidate trials](experiments/q4-block-primary.json) |
+[Golden evidence](experiments/q4-block-golden.jsonl) |
+[Q6 control repeat](optimized-repeat-primary.json) |
+[Final full run](optimized-q4.json) |
+[Final repeat](optimized-q4-repeat-primary.json)

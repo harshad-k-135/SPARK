@@ -28,6 +28,8 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     g++ @flags engine/transformer/delta_net.cpp tests/unit/delta_net.cpp -o (Join-Path $OutputDirectory 'spark_delta_net_test.exe')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    g++ @flags engine/sampling/sampler.cpp tests/unit/sampler.cpp -o (Join-Path $OutputDirectory 'spark_sampler_test.exe')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     if ($extra.Count -gt 0) {
         g++ @flags -fopenmp engine/model_loader/gguf.cpp engine/model_loader/packed_weights.cpp engine/transformer/delta_net.cpp tests/unit/qwen_cuda.cpp @extra -o (Join-Path $OutputDirectory 'spark_cuda_test.exe')
     }

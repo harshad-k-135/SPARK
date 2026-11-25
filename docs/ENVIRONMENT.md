@@ -33,3 +33,11 @@ linked against the installed CUDA driver, runtime, NVRTC and cuBLAS import
 libraries and successfully initialized all four. NVRTC 12.8 compiled a
 `compute_86` kernel, and the CUDA driver launched it on a non-default stream.
 The RTX 3050 wrote the expected value `3050` to a four-byte GPU buffer.
+
+The Windows MinGW fallback uses `g++` from PATH. With the default MSYS2
+installation path, the following line makes it visible to the current
+PowerShell session.
+
+```powershell
+$env:Path = 'C:\msys64\mingw64\bin;' + $env:Path
+```

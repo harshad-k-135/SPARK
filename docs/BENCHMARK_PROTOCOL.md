@@ -25,3 +25,10 @@ Use packed CUDA without graphs for SPARK and full GPU offload with a
 1,024-token batch cap and 512-token microbatch for the pinned llama.cpp build.
 Both use FP32 key and value caches. The harness rejects incomplete
 llama.cpp offload, reused prompt cache entries, and trials of the wrong length.
+
+## Tuned builds
+
+The settings above describe the preserved serial control. Tuned comparisons
+keep the same workload and use explicit SPARK worker flags. See
+[reproduction instructions and telemetry scope](BENCHMARKING.md) and the
+[experiment ledger](../benchmarks/optimization_log.md).

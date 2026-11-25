@@ -1,6 +1,8 @@
-// Qwen 0.8B single-token CUDA operations. Resident vectors and matrix rows
-// are contiguous. Reductions use 128 or 256 lanes to cover the native heads;
-// recurrent state is [head][key channel][value channel].
+// Qwen 0.8B CUDA prefill and decode operations.
+// Activations are contiguous [token][feature] rows. Decode uses one token,
+// and batched elementwise kernels map grid.y to the prompt row.
+// Reductions use 128 or 256 lanes to cover the native heads.
+// DeltaNet state is [head][key channel][value channel].
 R"CUDA(
 __device__ float sigmoid(float x) { return 1.f / (1.f + expf(-x)); }
 __device__ float silu(float x) { return x * sigmoid(x); }
