@@ -93,20 +93,25 @@ void serve(const std::filesystem::path& path) {
     const auto end = tokenizer.encode("<|endoftext|>", true);
     spark::GpuModel session(model, path, capacity, false, spark::DecodeGraph::off, true);
     std::cout << "{\"event\":\"ready\",\"device\":\"cuda\"}\n" << std::flush;
-    unsigned length = 0, maximum = 0;
-    while (std::cin >> length >> maximum) {
+    std::string header;
+    while (std::cin >> header) {
+        unsigned length = 0, maximum = 0;
+        const bool benchmark = header == "ids";
+        if (benchmark) std::cin >> length;
+        else parse_number(header, length, "worker payload length");
+        std::cin >> maximum;
         if (std::cin.get() != '\n' || length == 0 || length > 32768 || maximum == 0 || maximum > 512)
             throw std::runtime_error("invalid worker request");
         std::string prompt(length, '\0');
         if (!std::cin.read(prompt.data(), length)) throw std::runtime_error("truncated worker request");
         std::vector<spark::TokenId> input;
         try {
-            input = encode_prompt(tokenizer, prompt, true);
+            input = benchmark ? parse_ids(prompt) : encode_prompt(tokenizer, prompt, true);
         } catch (const std::exception&) {
             std::cout << "{\"event\":\"error\",\"error\":\"Invalid UTF-8 prompt.\"}\n" << std::flush;
             continue;
         }
-        if (input.size() > capacity - maximum) {
+        if (input.empty() || input.size() > capacity - maximum) {
             std::cout << "{\"event\":\"error\",\"error\":\"Prompt and output exceed the 2,048-token context.\"}\n"
                       << std::flush;
             continue;
@@ -119,16 +124,30 @@ void serve(const std::filesystem::path& path) {
         std::span<const float> logits;
         for (std::size_t i = 0; i < input.size(); ++i)
             logits = session.step(input[i], i + 1 == input.size());
+        const auto prefill_end = Clock::now();
         spark::Sampler sampler(logits.size(), {});
         unsigned count = 0;
         for (; count < maximum; ++count) {
-            const auto token = sampler.sample(logits);
-            if (token == eos || (end.size() == 1 && token == end.front())) break;
+            auto token = sampler.sample(logits);
+            const auto is_eos = [&](spark::TokenId id) {
+                return id == eos || (end.size() == 1 && id == end.front());
+            };
+            if (is_eos(token)) {
+                if (!benchmark) break;
+                float best = -std::numeric_limits<float>::infinity();
+                for (std::size_t i = 0; i < logits.size(); ++i) {
+                    const auto candidate = static_cast<spark::TokenId>(i);
+                    if (!is_eos(candidate) && logits[i] > best) {
+                        best = logits[i];
+                        token = candidate;
+                    }
+                }
+            }
             last = Clock::now();
             if (count == 0) first = last;
             const auto bytes = tokenizer.decode(std::span(&token, 1), true);
             constexpr auto hex = "0123456789abcdef";
-            std::cout << "{\"event\":\"token\",\"bytes\":\"";
+            std::cout << "{\"event\":\"token\",\"id\":" << token << ",\"bytes\":\"";
             for (const unsigned char byte : bytes) std::cout << hex[byte >> 4] << hex[byte & 15];
             std::cout << "\"}\n" << std::flush;
             if (count + 1 < maximum) logits = session.step(token, true);
@@ -136,6 +155,7 @@ void serve(const std::filesystem::path& path) {
         const auto ttft = std::chrono::duration<double, std::milli>(first - start).count();
         const auto decode = std::chrono::duration<double>(last - first).count();
         std::cout << "{\"event\":\"done\",\"prompt_tokens\":" << input.size()
+                  << ",\"prefill_ms\":" << std::chrono::duration<double, std::milli>(prefill_end - start).count()
                   << ",\"generated_tokens\":" << count << ",\"first_token_ms\":" << ttft
                   << ",\"decode_tokens_per_sec\":" << (count > 1 && decode > 0 ? (count - 1) / decode : 0)
                   << "}\n" << std::flush;
