@@ -63,3 +63,29 @@ variation. The same-session llama.cpp medians were 136.64 ms TTFT,
 
 [Raw trials](experiments/packed-graph-primary.json) |
 [Golden evidence](experiments/packed-graph-golden.jsonl)
+
+## D02 - Reuse Q6_K block bytes in packed GEMV
+
+- Bottleneck and hypothesis. The baseline reads the tied vocabulary matrix
+  every token and spends 4.45 ms in its final norm and output projection
+  on a short decode step. Reusing Q6_K low and high nibble stripes and
+  the block multiplier across consecutive products should reduce decode
+  time without changing reduction order.
+- Change. `cuda/kernels/qwen_ops.cuh` adds a Q6_K-specific warp kernel.
+  `cuda/qwen_gpu.cpp` dispatches Q6_K matrices to it when enabled.
+  The route uses identical packed storage, FP32 arithmetic and launch
+  geometry. Other GGUF types use the original kernel. Both arms use
+  batched prefill and bucketed graphs.
+- Correctness. CUDA tests passed, including Q6_K projection versus decoded
+  CPU weights. Golden output matched 1,280/1,280 IDs, maximum logit-gap
+  error 0.040231. All ten matched GGUF benchmark pairs agreed exactly.
+- Results. Median decode 51.83 to 69.56 tok/s (+34.2%). P95 decode latency
+  2,467.12 to 1,834.88 ms (-25.6%). Total latency 3,258.02 to 2,624.71 ms
+  (-19.4%). TTFT 805.32 to 794.56 ms (-1.3%). Peak VRAM 753 MiB on both arms.
+  Peak working set 427.01 to 427.02 MiB.
+- Decision **KEEP**. The pinned llama.cpp comparison measured 121.72 tok/s,
+  140.44 ms TTFT and 761 MiB peak board memory on this run.
+
+[Raw trials](experiments/q6-block-primary.json) |
+[Golden evidence](experiments/q6-block-golden.jsonl) |
+[Packed baseline CUDA event trace](packed-baseline-profile.jsonl)

@@ -64,3 +64,16 @@ priority over multi-user scheduling.
 
 See [design](DESIGN.md), [historical results](RESULTS.md), and
 [benchmark protocol](BENCHMARK_PROTOCOL.md).
+
+## Packed baseline stage trace
+
+A representative short-prompt decode step emitted CUDA event times of
+7.48 ms MLP, 5.43 ms recurrent, 4.45 ms final norm and vocabulary
+projection, and 1.45 ms full-attention blocks. This is one profiled
+step and includes the effects of dispatch between markers. It is distinct
+from protocol throughput. High board utilization (97.66% median on the
+primary baseline) indicates a busy device over the sample windows.
+Achieved memory bandwidth, instruction occupancy, and Tensor Core usage
+require kernel counters or disassembly to establish.
+
+[Raw packed CUDA events](../benchmarks/packed-baseline-profile.jsonl)
