@@ -8,6 +8,7 @@ Qwen3.5-0.8B Q4_K_M GGUF.
 | View | Capture |
 | --- | --- |
 | Dashboard | [Dashboard](dashboard.png) |
+| High-level UML component diagram | [PNG](architecture-uml.png) and [editable SVG](architecture-uml.svg) |
 | Engine execution flow | [Architecture](architecture.png) |
 | Live generation | [Streaming](live_inference.png) and [completed](live_inference_complete.png) |
 | Sampled GPU utilization and board VRAM | [GPU monitoring](gpu_monitoring.png) |

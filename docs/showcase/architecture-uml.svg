@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1080" viewBox="0 0 1440 1080" role="img" aria-labelledby="title desc">
+<title id="title">SPARK high-level UML component diagram</title>
+<desc id="desc">Browser, FastAPI, SQLite, benchmark harness, native worker, shared GGUF, external llama.cpp process, and SPARK CUDA backend.</desc>
+<defs>
+<marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+<path d="M1 1L10 6L1 11" fill="none" stroke="#90abc8" stroke-width="2"/>
+</marker>
+</defs>
+<rect width="1440" height="1080" fill="#101a2c"/>
+<path d="M72 185H1368M72 930H1368" stroke="#304466"/>
+<g font-family="Segoe UI, Arial, sans-serif" fill="#eef5ff">
+<text x="72" y="105" font-size="61" font-weight="700">SPARK</text>
+<text x="72" y="153" font-size="27" fill="#aebfda">High-level UML component diagram · Qwen3.5-0.8B on one GPU</text>
+<path d="M402 292L505 292" stroke="#90abc8" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+<path d="M885 292L1000 292" stroke="#90abc8" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+<path d="M620 355L620 470" stroke="#90abc8" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+<path d="M770 470L770 355" stroke="#90abc8" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+<path d="M505 322H451V415H235V470" stroke="#90abc8" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+<path d="M402 534L505 534" stroke="#90abc8" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+<path d="M1000 534L885 534" stroke="#90abc8" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+<path d="M236 598L236 722" stroke="#90abc8" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+<path d="M650 598L650 722" stroke="#90abc8" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+<path d="M800 722L800 598" stroke="#90abc8" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+<path d="M1184 598V652H344V722" fill="none" stroke="#b39bdf" stroke-width="2" stroke-dasharray="8 6" marker-end="url(#arrow)"/>
+<rect x="72" y="230" width="330" height="125" rx="14" fill="#1a2a43" stroke="#476088"/>
+<g transform="translate(94,244)">
+<path d="M0 1H18V16H0ZM-3 5H5M-3 11H5" fill="none" stroke="#70dfc7" stroke-width="1.6"/>
+<text x="28" y="15" fill="#9edfd6" font-size="12" letter-spacing="1.2">«component»</text>
+<text y="46" font-size="24" font-weight="700">Browser dashboard</text>
+<text y="74" font-size="19" fill="#cedaeb">Live inference · comparisons</text>
+<text y="99" font-size="19" fill="#cedaeb">Trial charts · JSON export</text>
+</g>
+<rect x="505" y="230" width="380" height="125" rx="14" fill="#1a2a43" stroke="#476088"/>
+<g transform="translate(527,244)">
+<path d="M0 1H18V16H0ZM-3 5H5M-3 11H5" fill="none" stroke="#70dfc7" stroke-width="1.6"/>
+<text x="28" y="15" fill="#9edfd6" font-size="12" letter-spacing="1.2">«component»</text>
+<text y="46" font-size="24" font-weight="700">FastAPI control API</text>
+<text y="74" font-size="19" fill="#cedaeb">Queues runs and streams events</text>
+<text y="99" font-size="19" fill="#cedaeb">Serializes GPU work</text>
+</g>
+<rect x="1000" y="230" width="368" height="125" rx="14" fill="#1a2a43" stroke="#476088"/>
+<g transform="translate(1022,244)">
+<path d="M0 1H18V16H0ZM-3 5H5M-3 11H5" fill="none" stroke="#70dfc7" stroke-width="1.6"/>
+<text x="28" y="15" fill="#9edfd6" font-size="12" letter-spacing="1.2">«component»</text>
+<text y="46" font-size="24" font-weight="700">SQLite run history</text>
+<text y="74" font-size="19" fill="#cedaeb">Run status · results · metadata</text>
+<text y="99" font-size="19" fill="#cedaeb">Raw JSON retained for export</text>
+</g>
+<rect x="72" y="470" width="330" height="128" rx="14" fill="#1a2a43" stroke="#476088"/>
+<g transform="translate(94,484)">
+<path d="M0 1H18V16H0ZM-3 5H5M-3 11H5" fill="none" stroke="#70dfc7" stroke-width="1.6"/>
+<text x="28" y="15" fill="#9edfd6" font-size="12" letter-spacing="1.2">«component»</text>
+<text y="46" font-size="24" font-weight="700">Benchmark harness</text>
+<text y="74" font-size="19" fill="#cedaeb">Matched prompt IDs and GGUF</text>
+<text y="99" font-size="19" fill="#cedaeb">NVIDIA board telemetry</text>
+</g>
+<rect x="505" y="470" width="380" height="128" rx="14" fill="#1a2a43" stroke="#476088"/>
+<g transform="translate(527,484)">
+<path d="M0 1H18V16H0ZM-3 5H5M-3 11H5" fill="none" stroke="#70dfc7" stroke-width="1.6"/>
+<text x="28" y="15" fill="#9edfd6" font-size="12" letter-spacing="1.2">«component»</text>
+<text y="46" font-size="24" font-weight="700">SPARK native worker · C++20</text>
+<text y="74" font-size="19" fill="#cedaeb">GGUF validation · byte-level BPE</text>
+<text y="99" font-size="19" fill="#cedaeb">Sequence control · host sampling</text>
+</g>
+<rect x="1000" y="470" width="368" height="128" rx="14" fill="#1a2a43" stroke="#476088"/>
+<g transform="translate(1022,484)">
+<path d="M0 1H18V16H0ZM-3 5H5M-3 11H5" fill="none" stroke="#70dfc7" stroke-width="1.6"/>
+<text x="28" y="15" fill="#9edfd6" font-size="12" letter-spacing="1.2">«component»</text>
+<text y="46" font-size="24" font-weight="700">Qwen3.5 GGUF</text>
+<text y="74" font-size="19" fill="#cedaeb">Q4_K_M model artifact</text>
+<text y="99" font-size="19" fill="#cedaeb">Shared weights and tokenizer data</text>
+</g>
+<rect x="72" y="722" width="330" height="140" rx="14" fill="#2b2245" stroke="#476088"/>
+<g transform="translate(94,736)">
+<path d="M0 1H18V16H0ZM-3 5H5M-3 11H5" fill="none" stroke="#70dfc7" stroke-width="1.6"/>
+<text x="28" y="15" fill="#9edfd6" font-size="12" letter-spacing="1.2">«component»</text>
+<text y="46" font-size="24" font-weight="700">llama.cpp CUDA process</text>
+<text y="74" font-size="19" fill="#cedaeb">External benchmark reference</text>
+<text y="99" font-size="19" fill="#cedaeb">Same workload, timed separately</text>
+</g>
+<rect x="505" y="722" width="863" height="140" rx="14" fill="#143a3b" stroke="#5cdbbf"/>
+<g transform="translate(527,736)">
+<path d="M0 1H18V16H0ZM-3 5H5M-3 11H5" fill="none" stroke="#70dfc7" stroke-width="1.6"/>
+<text x="28" y="15" fill="#9edfd6" font-size="12" letter-spacing="1.2">«component»</text>
+<text y="46" font-size="24" font-weight="700">SPARK CUDA backend · RTX 3050</text>
+<text y="74" font-size="19" fill="#cedaeb">Batched prefill → recurrent state + KV cache → single-token decode</text>
+<text y="99" font-size="19" fill="#cedaeb">Q4_K / Q6_K projections → logits → host sampler</text>
+</g>
+<g fill="#afc4dd" font-size="17">
+<text x="410" y="280">HTTP</text>
+<text x="552" y="412">requests</text>
+<text x="779" y="412">events</text>
+<text x="273" y="402">benchmark jobs</text>
+<text x="240" y="685">loopback SSE</text>
+<text x="540" y="694">tokens / launches</text>
+<text x="812" y="694">FP32 logits</text>
+<text x="1000" y="640" fill="#cab4f5">same GGUF</text>
+</g>
+<text x="72" y="981" font-size="23" fill="#90e5d3" font-weight="650">One prompt, two phases</text>
+<text x="72" y="1021" font-size="21" fill="#cedaeb">Prefill builds the model state. Decode updates it and generates one token at a time.</text>
+</g>
+</svg>
