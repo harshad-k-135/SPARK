@@ -1,5 +1,7 @@
 /build/
 /.venv/
 /models/
+/docs/profiles/
+/docs/showcase/
 __pycache__/
 *.pyc
