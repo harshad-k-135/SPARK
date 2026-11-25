@@ -244,6 +244,29 @@ extern "C" __global__ void unpack_matrix(const unsigned char* data, float* outpu
     }
 }
 
+__device__ unsigned short fp16_bits(float value) {
+    unsigned short bits;
+    asm("cvt.rn.f16.f32 %0, %1;" : "=h"(bits) : "f"(value));
+    return bits;
+}
+
+// 256 lanes convert contiguous packed-matrix stripes and activation vectors
+// for prompt GEMM. Quantized storage outside this scratch path stays packed.
+extern "C" __global__ void unpack_matrix_half(const unsigned char* data, unsigned short* output,
+                                               int cols, int bytes, int type) {
+    const int row = blockIdx.y;
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < cols) {
+        const auto* start = data + static_cast<unsigned long long>(row) * bytes;
+        output[row * cols + i] = fp16_bits(packed_value(start, i, type));
+    }
+}
+
+extern "C" __global__ void to_half(const float* in, unsigned short* output, int count) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < count) output[i] = fp16_bits(in[i]);
+}
+
 extern "C" __global__ void packed_embedding(const unsigned char* row, float* x, int type) {
     int i = blockIdx.x * 256 + threadIdx.x;
     x[i] = packed_value(row, i, type);

@@ -57,6 +57,7 @@ async function main() {
             if (process.env.SPARK_CUDA_WEIGHTS) nativeArgs.push('--cuda-weights', process.env.SPARK_CUDA_WEIGHTS);
             if (process.env.SPARK_BATCH_PREFILL === '1') nativeArgs.push('--batch-prefill');
             if (process.env.SPARK_Q6_BLOCK_GEMV === '1') nativeArgs.push('--q6-block-gemv');
+            if (process.env.SPARK_FP16_PREFILL === '1') nativeArgs.push('--fp16-prefill');
             if (full) nativeArgs.push('--ignore-eos');
             const request = { prompt: promptTokens, temperature: 0, n_predict: count,
                 return_tokens: true, cache_prompt: false, ignore_eos: full, n_probs: full ? 0 : 8 };

@@ -32,13 +32,13 @@ namespace {
 constexpr auto usage =
     "Usage: spark inspect --model FILE.gguf [--tensors]\n"
     "       spark tokenize --model FILE.gguf --prompt TEXT [--special]\n"
-    "       spark serve --model FILE.gguf [--batch-prefill] [--bucket-graph] [--q6-block-gemv]\n"
+    "       spark serve --model FILE.gguf [--batch-prefill] [--bucket-graph] [--q6-block-gemv] [--fp16-prefill]\n"
     "       spark generate --model FILE.gguf (--prompt TEXT [--chat] | --prompt-ids IDS)\n"
     "              [--device cpu|cuda] [--max-new-tokens N] [--context N] [--temperature T]\n"
     "              [--top-p P] [--seed N]\n"
     "              [--ignore-eos] [--ids] [--first-logits PATH] [--profile] [--timings]\n"
     "              [--warmups N] [--trials N] [--cuda-graph off|single|bucket]\n"
-    "              [--cuda-weights fp32|packed] [--batch-prefill] [--q6-block-gemv]\n";
+    "              [--cuda-weights fp32|packed] [--batch-prefill] [--q6-block-gemv] [--fp16-prefill]\n";
 
 template <typename T>
 void parse_number(std::string_view value, T& result, std::string_view option) {
@@ -84,7 +84,7 @@ std::vector<spark::TokenId> encode_prompt(const spark::Tokenizer& tokenizer,
     return prefix;
 }
 
-void serve(const std::filesystem::path& path, bool batch_prefill, bool bucket_graph, bool q6_block_gemv) {
+void serve(const std::filesystem::path& path, bool batch_prefill, bool bucket_graph, bool q6_block_gemv, bool fp16_prefill) {
 #ifdef SPARK_WITH_CUDA
     constexpr unsigned capacity = 2048;
     const spark::Gguf model(path);
@@ -92,7 +92,7 @@ void serve(const std::filesystem::path& path, bool batch_prefill, bool bucket_gr
     const auto eos = std::get<std::uint64_t>(model.metadata("tokenizer.ggml.eos_token_id"));
     const auto end = tokenizer.encode("<|endoftext|>", true);
     const auto graph = bucket_graph ? spark::DecodeGraph::bucket : spark::DecodeGraph::off;
-    spark::GpuModel session(model, path, capacity, false, graph, true, batch_prefill, q6_block_gemv);
+    spark::GpuModel session(model, path, capacity, false, graph, true, batch_prefill, q6_block_gemv, fp16_prefill);
     std::cout << "{\"event\":\"ready\",\"device\":\"cuda\"}\n" << std::flush;
     std::string header;
     while (std::cin >> header) {
@@ -164,6 +164,7 @@ void serve(const std::filesystem::path& path, bool batch_prefill, bool bucket_gr
     (void)batch_prefill;
     (void)bucket_graph;
     (void)q6_block_gemv;
+    (void)fp16_prefill;
     throw std::runtime_error("this SPARK build has no CUDA worker");
 #endif
 }
@@ -173,7 +174,7 @@ void generate(const std::vector<std::string>& args) {
         (args[3] != "--prompt" && args[3] != "--prompt-ids"))
         throw std::invalid_argument(usage);
     bool chat = false, ids_only = false, ignore_eos = false, profile = false, timings = false;
-    bool batch_prefill = false, q6_block_gemv = false;
+    bool batch_prefill = false, q6_block_gemv = false, fp16_prefill = false;
     std::string_view device = "cpu";
     std::string_view graph = "off";
     std::string_view weights = "fp32";
@@ -190,6 +191,7 @@ void generate(const std::vector<std::string>& args) {
         else if (args[i] == "--timings") timings = true;
         else if (args[i] == "--batch-prefill") batch_prefill = true;
         else if (args[i] == "--q6-block-gemv") q6_block_gemv = true;
+        else if (args[i] == "--fp16-prefill") fp16_prefill = true;
         else if (args[i] == "--device" && i + 1 < args.size()) device = args[++i];
         else if (args[i] == "--cuda-graph" && i + 1 < args.size()) graph = args[++i];
         else if (args[i] == "--cuda-weights" && i + 1 < args.size()) weights = args[++i];
@@ -227,6 +229,8 @@ void generate(const std::vector<std::string>& args) {
         throw std::invalid_argument("--device must be cpu or cuda");
     if (q6_block_gemv && weights != "packed")
         throw std::invalid_argument("--q6-block-gemv requires --cuda-weights packed");
+    if (fp16_prefill && (!batch_prefill || weights != "packed"))
+        throw std::invalid_argument("--fp16-prefill requires --batch-prefill and packed CUDA weights");
     if (batch_prefill && device != "cuda")
         throw std::invalid_argument("--batch-prefill requires --device cuda");
     if (profile && device != "cuda")
@@ -261,7 +265,7 @@ void generate(const std::vector<std::string>& args) {
         const auto mode = graph == "single" ? spark::DecodeGraph::single
                         : graph == "bucket" ? spark::DecodeGraph::bucket : spark::DecodeGraph::off;
         gpu = std::make_unique<spark::GpuModel>(model, path, context, profile, mode,
-                                               weights == "packed", batch_prefill, q6_block_gemv);
+                                               weights == "packed", batch_prefill, q6_block_gemv, fp16_prefill);
     }
 #else
     if (device == "cuda") throw std::runtime_error("this SPARK build has no CUDA backend");
@@ -430,18 +434,19 @@ int run(const std::vector<std::string>& args) {
         return 0;
     }
     if (args[0] == "serve" && args.size() >= 3 && args[1] == "--model") {
-        bool batch_prefill = false, bucket_graph = false, q6_block_gemv = false;
+        bool batch_prefill = false, bucket_graph = false, q6_block_gemv = false, fp16_prefill = false;
         for (std::size_t i = 3; i < args.size(); ++i) {
             if (args[i] == "--batch-prefill" && !batch_prefill) batch_prefill = true;
             else if (args[i] == "--bucket-graph" && !bucket_graph) bucket_graph = true;
             else if (args[i] == "--q6-block-gemv" && !q6_block_gemv) q6_block_gemv = true;
+            else if (args[i] == "--fp16-prefill" && !fp16_prefill) fp16_prefill = true;
             else throw std::invalid_argument(usage);
         }
 #ifdef _WIN32
         if (_setmode(_fileno(stdin), _O_BINARY) < 0 || _setmode(_fileno(stdout), _O_BINARY) < 0)
             throw std::runtime_error("cannot configure worker pipe mode");
 #endif
-        serve(std::filesystem::path(std::u8string(args[2].begin(), args[2].end())), batch_prefill, bucket_graph, q6_block_gemv);
+        serve(std::filesystem::path(std::u8string(args[2].begin(), args[2].end())), batch_prefill, bucket_graph, q6_block_gemv, fp16_prefill);
         return 0;
     }
     if ((args.size() == 5 || args.size() == 6) && args[0] == "tokenize" && args[1] == "--model" &&

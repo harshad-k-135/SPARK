@@ -7,6 +7,7 @@ param(
     [ValidateSet('off','bucket','single')][string]$Graph = 'off',
     [switch]$BatchPrefill,
     [switch]$Q6BlockGemv,
+    [switch]$Fp16Prefill,
     [int]$Port = 18085
 )
 
@@ -21,6 +22,7 @@ try {
     $env:SPARK_DEVICE = 'cuda'
     $env:SPARK_CUDA_WEIGHTS = 'packed'
     $env:SPARK_CUDA_GRAPH = $Graph
+    $env:SPARK_FP16_PREFILL = [string][int]$Fp16Prefill.IsPresent
     $env:SPARK_Q6_BLOCK_GEMV = [string][int]$Q6BlockGemv.IsPresent
     $env:SPARK_BATCH_PREFILL = [string][int]$BatchPrefill.IsPresent
     $env:TEMP = $work

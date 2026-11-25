@@ -116,12 +116,13 @@ function finish(start, stamps, ids, prefill, sensor) {
         telemetry: samples.map(({time_ms, ...rest}) => ({elapsed_ms: time_ms - start, ...rest})) };
 }
 
-async function sparkSession(exe, model, batchPrefill, bucketGraph, q6BlockGemv) {
+async function sparkSession(exe, model, batchPrefill, bucketGraph, q6BlockGemv, fp16Prefill) {
     const launch = performance.now();
     const flags = ['serve', '--model', model];
     if (batchPrefill) flags.push('--batch-prefill');
     if (bucketGraph) flags.push('--bucket-graph');
     if (q6BlockGemv) flags.push('--q6-block-gemv');
+    if (fp16Prefill) flags.push('--fp16-prefill');
     const proc = managed(exe, flags, { stdio: ['pipe', 'pipe', 'pipe'] });
     proc.child.stdin.on('error', () => {});
     const reader = createInterface({ input: proc.child.stdout })[Symbol.asyncIterator]();
@@ -134,7 +135,7 @@ async function sparkSession(exe, model, batchPrefill, bucketGraph, q6BlockGemv) 
         pid: proc.child.pid,
         configuration: 'Packed GGUF CUDA, FP32 KV, ' + (bucketGraph ? 'bucket graphs, ' : 'graphs off, ') +
             (batchPrefill ? '128-token projection batches' : 'serial prefill') +
-            (q6BlockGemv ? ', Q6_K block GEMV' : ''),
+            (q6BlockGemv ? ', Q6_K block GEMV' : '') + (fp16Prefill ? ', FP16 prefill GEMM' : ''),
         stop: proc.stop,
         async trial(prompt, sensor) {
             const payload = prompt.join(',');
@@ -229,12 +230,14 @@ async function llamaSession(exe, model, device) {
 
 async function main() {
     const [, , spark, llama, model, out, ...options] = process.argv;
-    if (!spark || !llama || !model || !out || options.some(x => !['--smoke', '--primary', '--batch-prefill', '--bucket-graph', '--q6-block-gemv'].includes(x)))
-        throw new Error('usage: node compare_cuda.cjs SPARK_EXE LLAMA_SERVER_EXE GGUF OUT [--smoke|--primary] [--batch-prefill] [--bucket-graph] [--q6-block-gemv]');
+    if (!spark || !llama || !model || !out || options.some(x => !['--smoke', '--primary', '--batch-prefill', '--bucket-graph', '--q6-block-gemv', '--fp16-prefill'].includes(x)))
+        throw new Error('usage: node compare_cuda.cjs SPARK_EXE LLAMA_SERVER_EXE GGUF OUT [--smoke|--primary] [--batch-prefill] [--bucket-graph] [--q6-block-gemv] [--fp16-prefill]');
     const smoke = options.includes('--smoke');
     const batchPrefill = options.includes('--batch-prefill');
     const bucketGraph = options.includes('--bucket-graph');
     const q6BlockGemv = options.includes('--q6-block-gemv');
+    const fp16Prefill = options.includes('--fp16-prefill');
+    if (fp16Prefill && !batchPrefill) throw new Error('--fp16-prefill requires --batch-prefill');
     if (existsSync(out)) throw new Error('benchmark output already exists: ' + out);
     const { stdout: idsText } = await exec(spark, ['tokenize', '--model', model, '--prompt', passage.repeat(32)]);
     const ids = JSON.parse(idsText);
@@ -269,7 +272,7 @@ async function main() {
         const group = { prompt_tokens: length, prompt_token_ids: prompt, engines: {} };
         const order = length === 512 ? ['llama_cpp', 'spark'] : ['spark', 'llama_cpp'];
         for (const name of order) {
-            const session = await (name === 'spark' ? sparkSession(spark, model, batchPrefill, bucketGraph, q6BlockGemv) : llamaSession(llama, model, match[1]));
+            const session = await (name === 'spark' ? sparkSession(spark, model, batchPrefill, bucketGraph, q6BlockGemv, fp16Prefill) : llamaSession(llama, model, match[1]));
             let sensor;
             try {
                 sensor = telemetry(session.pid);

@@ -53,11 +53,11 @@ struct Stream {
 
 struct Blas {
     cublasHandle_t value = nullptr;
-    explicit Blas(CUstream stream) {
+    explicit Blas(CUstream stream, cublasMath_t math = CUBLAS_PEDANTIC_MATH) {
         SPARK_CUDA(cublasCreate(&value));
         try {
             SPARK_CUDA(cublasSetStream(value, stream));
-            SPARK_CUDA(cublasSetMathMode(value, CUBLAS_PEDANTIC_MATH));
+            SPARK_CUDA(cublasSetMathMode(value, math));
         } catch (...) {
             SPARK_CUDA_CLEANUP(cublasDestroy(value));
             throw;
@@ -171,14 +171,15 @@ struct Layer {
 
 struct Kernels {
     CUfunction rms, residual, swiglu, convolve, delta, norm_rope, cache_kv, scores, read_attention;
-    CUfunction packed_matvec, packed_embedding, unpack_matrix, q6_block_matvec;
+    CUfunction packed_matvec, packed_embedding, unpack_matrix, q6_block_matvec, unpack_matrix_half, to_half;
     explicit Kernels(const Module& module)
         : rms(module.get("rms")), residual(module.get("residual")), swiglu(module.get("swiglu")),
           convolve(module.get("convolve")), delta(module.get("delta")),
           norm_rope(module.get("norm_rope")), cache_kv(module.get("cache_kv")),
           scores(module.get("scores")), read_attention(module.get("read_attention")),
           packed_matvec(module.get("packed_matvec")), packed_embedding(module.get("packed_embedding")),
-          unpack_matrix(module.get("unpack_matrix")), q6_block_matvec(module.get("q6_block_matvec")) {}
+          unpack_matrix(module.get("unpack_matrix")), q6_block_matvec(module.get("q6_block_matvec")),
+          unpack_matrix_half(module.get("unpack_matrix_half")), to_half(module.get("to_half")) {}
 };
 
 constexpr int hidden = 1024, width = 3584, vocab = 248320;
@@ -230,22 +231,27 @@ struct GpuModel::Impl {
     DecodeGraph graph_mode;
     PrefillBuffers prefill_buffers{};
     bool q6_block_gemv;
+    std::unique_ptr<Blas> prefill_blas;
+    CUdeviceptr half_input = 0;
     CUdeviceptr cursor = 0;
     float eps = 0, base = 0;
 
     Impl(const Gguf& gguf, const std::filesystem::path& path, std::size_t context, bool trace,
-         DecodeGraph mode, bool packed, bool batch_prefill, bool use_q6_block_gemv)
+         DecodeGraph mode, bool packed, bool batch_prefill, bool use_q6_block_gemv, bool fp16_prefill)
         : profile(trace), capacity(static_cast<int>(context)), graph_mode(mode),
           q6_block_gemv(use_q6_block_gemv) {
         validate(gguf, context);
+        if (fp16_prefill && (!packed || !batch_prefill))
+            throw std::invalid_argument("FP16 prefill needs packed weights and batched prefill");
         eps = static_cast<float>(std::get<double>(gguf.metadata("qwen35.attention.layer_norm_rms_epsilon")));
         base = static_cast<float>(std::get<double>(gguf.metadata("qwen35.rope.freq_base")));
         auto budget = static_cast<std::size_t>(6) * context * 512 * 2 * sizeof(float) +
                       static_cast<std::size_t>(18) * (16 * 128 * 128 + 3 * 6144) * sizeof(float) +
                       8 * 1024 * 1024;
         if (batch_prefill) {
-            budget += (static_cast<std::size_t>(prefill_channels) * prefill_chunk_size +
-                       max_layer_matrix) * sizeof(float) + 13 * 256;
+            budget += static_cast<std::size_t>(prefill_channels) * prefill_chunk_size * sizeof(float) + 14 * 256;
+            budget += fp16_prefill ? (max_layer_matrix + width * prefill_chunk_size) * sizeof(std::uint16_t)
+                                   : max_layer_matrix * sizeof(float);
         }
         for (const auto& [name, t] : gguf.tensors()) {
             if (name.starts_with("blk.24.")) continue;
@@ -335,7 +341,14 @@ struct GpuModel::Impl {
             const auto chunk = [&](int channels) { return buffer(prefill_chunk_size * channels); };
             prefill_buffers = {chunk(hidden), chunk(hidden), chunk(hidden), chunk(6144),
                                chunk(512), chunk(512), chunk(2048), chunk(width), chunk(width),
-                               chunk(2048), chunk(16), chunk(16), buffer(max_layer_matrix)};
+                               chunk(2048), chunk(16), chunk(16), 0};
+            if (fp16_prefill) {
+                prefill_buffers.weights = arena->allocate(max_layer_matrix * sizeof(std::uint16_t));
+                half_input = arena->allocate(width * prefill_chunk_size * sizeof(std::uint16_t));
+                prefill_blas = std::make_unique<Blas>(stream.value, CUBLAS_DEFAULT_MATH);
+            } else {
+                prefill_buffers.weights = buffer(max_layer_matrix);
+            }
         }
         if (graph_mode != DecodeGraph::off) {
             static_assert(sizeof(float) == sizeof(int));
@@ -410,15 +423,26 @@ struct GpuModel::Impl {
 
     void project_chunk(const Matrix& matrix, CUdeviceptr in, CUdeviceptr out, int tokens) {
         CUdeviceptr weights = matrix.data;
+        const float one = 1, zero = 0;
         if (matrix.type != 0) {
-            if (matrix.cols * matrix.rows > max_layer_matrix)
+            if (matrix.cols * matrix.rows > max_layer_matrix || matrix.cols > width)
                 throw std::logic_error("prefill projection exceeds unpack scratch");
             weights = prefill_buffers.weights;
-            launch(kernel.unpack_matrix, (matrix.cols + 255) / 256, matrix.rows, 256,
+            const auto unpack = half_input ? kernel.unpack_matrix_half : kernel.unpack_matrix;
+            launch(unpack, (matrix.cols + 255) / 256, matrix.rows, 256,
                    matrix.data, weights, matrix.cols, matrix.bytes, matrix.type);
+            if (half_input) {
+                const int elements = matrix.cols * tokens;
+                launch(kernel.to_half, (elements + 255) / 256, 1, 256, in, half_input, elements);
+                SPARK_CUDA(cublasGemmEx(prefill_blas->value, CUBLAS_OP_T, CUBLAS_OP_N, matrix.rows,
+                    tokens, matrix.cols, &one, reinterpret_cast<const void*>(weights), CUDA_R_16F,
+                    matrix.cols, reinterpret_cast<const void*>(half_input), CUDA_R_16F, matrix.cols,
+                    &zero, reinterpret_cast<void*>(out), CUDA_R_32F, matrix.rows,
+                    CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT));
+                return;
+            }
         }
         // Contiguous token vectors are the columns of B and C in cuBLAS.
-        const float one = 1, zero = 0;
         SPARK_CUDA(cublasSgemm(blas.value, CUBLAS_OP_T, CUBLAS_OP_N, matrix.rows, tokens,
                                matrix.cols, &one, reinterpret_cast<const float*>(weights),
                                matrix.cols, reinterpret_cast<const float*>(in), matrix.cols,
@@ -561,9 +585,9 @@ struct GpuModel::Impl {
 };
 
 GpuModel::GpuModel(const Gguf& gguf, const std::filesystem::path& path, std::size_t context,
-                   bool profile, DecodeGraph graph, bool packed, bool batch_prefill, bool q6_block_gemv)
+                   bool profile, DecodeGraph graph, bool packed, bool batch_prefill, bool q6_block_gemv, bool fp16_prefill)
     : impl_(std::make_unique<Impl>(gguf, path, context, profile, graph, packed, batch_prefill,
-                                   q6_block_gemv)) {}
+                                   q6_block_gemv, fp16_prefill)) {}
 GpuModel::~GpuModel() = default;
 void GpuModel::reset() { impl_->reset(); }
 std::span<const float> GpuModel::prefill(std::span<const TokenId> tokens) { return impl_->prefill(tokens); }
