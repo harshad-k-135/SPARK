@@ -12,7 +12,7 @@
 | Native Qwen CUDA generation | Smoke passed | CUDA generated `4` on the RTX 3050 from the supplied GGUF. The arena used 3,088,575,744 bytes at 2,048 context. Fixed-seed CUDA operation tests passed. |
 | 2 — Qwen CUDA parity and baseline | Passed | All 20 first tokens and 1,280 continuation IDs matched. Maximum first-step logit-gap error was 0.001081. Baseline and profiler evidence recorded below. |
 | 3 — Optimized Qwen decode | Passed | Packed GGUF CUDA raised median native decode throughput from 40.46 to 51.21 tokens/sec. The bucketed graph variant reached 46.08. Both passed full parity. |
-| 4 — GPU comparison and control API | Partial | The dashboard streams native CUDA output. The repaired llama.cpp build detected the RTX 3050 and offloaded all 26 layers. Matched trials are pending. |
+| 4 — GPU comparison and control API | Passed | The one-command harness compared both runtimes at 128, 512, and 1,024 prompt tokens. The dashboard loads all three workloads and links the raw trials. |
 
 Target file `Qwen_Qwen3.5-0.8B-Q4_K_M.gguf`, SHA-256
 `fb044e93939a70469c905781334f5de1e6c8b608ced6cbc8c9249bd4127d9526`.
@@ -23,9 +23,8 @@ stored vocabulary has 248,320 entries.
 The first Q6_K embedding row decoded to finite values from `-0.0759277` to
 `0.0695343`. A deliberately truncated copy of the GGUF header was rejected.
 
-The recorded [external Qwen API smoke test](../benchmark/results/qwen-local-smoke/02-qwen-api.png)
-ran on CPU. Live SPARK frontend captures and a matched llama.cpp GPU
-comparison remain pending.
+The original [external Qwen API smoke test](../benchmark/results/qwen-local-smoke/02-qwen-api.png)
+ran on CPU. The matched GPU comparison is recorded below.
 
 The staged b10159 build (`f95de9776`) detected the RTX 3050 as `CUDA0`
 after installing the official CUDA 13.3 runtime bundle beside its binaries.
@@ -128,3 +127,30 @@ The dashboard was restarted with the packed CUDA worker and again streamed
 `4` from the supplied Qwen model. The status endpoint confirmed that the
 packed model remained loaded and the runs endpoint returned the packed
 benchmark results. [Packed dashboard events](../benchmark/results/qwen-local-smoke/dashboard-packed-generation.jsonl)
+
+## Matched CUDA comparison with llama.cpp
+
+Both engines used the same Qwen Q4_K_M GGUF and pretokenized requests, a
+2,048-token context, 128 forced output tokens, greedy sampling, and FP32
+KV. Each runtime ran alone on the RTX 3050. Each workload used five
+warm-ups and ten measured trials per runtime. SPARK was built from
+`8e6c1b2` with the CUDA 12.8 toolkit. The b10159 llama.cpp binary
+(`f95de9776`) used its CUDA 13.3 runtime and offloaded all 26 reported
+layers. The NVIDIA driver was 596.08 and Windows used the Balanced power
+scheme.
+
+| Input tokens | SPARK decode tok/s | llama.cpp decode tok/s | SPARK first token | llama.cpp first token | SPARK peak VRAM | llama.cpp peak VRAM |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 128 | 52.79 | 130.12 | 1,682.68 ms | 101.32 ms | 683 MiB | 761 MiB |
+| 512 | 50.39 | 123.76 | 6,929.95 ms | 150.64 ms | 683 MiB | 761 MiB |
+| 1,024 | 48.49 | 119.88 | 14,377.17 ms | 246.59 ms | 683 MiB | 761 MiB |
+
+The table shows medians. llama.cpp led on decode, first-token latency,
+and prefill in every measured workload. SPARK used 78 MiB less sampled
+peak board memory in each workload. All 3,840 generated token IDs
+matched across the 30 measured pairs. The raw report includes IQR,
+P95, prefill throughput, GPU utilization, clocks, power, temperature,
+full outputs, and each runtime's cold-load timing.
+[Raw trials](../benchmark/results/spark-vs-llama-cuda.json)
+· [Decode dashboard capture](../benchmark/results/dashboard/spark-dashboard-decode.png)
+· [VRAM dashboard capture](../benchmark/results/dashboard/spark-dashboard-vram.png)

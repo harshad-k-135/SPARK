@@ -226,6 +226,12 @@ async def comparison():
     result = row_data(row)
     report = result["report"]
     for workload in report["workloads"]:
+        spark_trials = [trial for trial in workload["engines"]["spark"]["trials"] if not trial["warmup"]]
+        llama_trials = [trial for trial in workload["engines"]["llama_cpp"]["trials"] if not trial["warmup"]]
+        workload["matching_trials"] = sum(
+            left["generated_token_ids"] == right["generated_token_ids"]
+            for left, right in zip(spark_trials, llama_trials)
+        )
         for engine in workload["engines"].values():
             for trial in engine["trials"]:
                 trial.pop("telemetry", None)

@@ -118,10 +118,10 @@
     }
     if (chart.firstChild) showTrial(0, chart.firstChild);
     const prefix = workload.greedy_prefix_match;
-    byId('quality').textContent = prefix === report.output_tokens
-      ? 'Identical ' + prefix + '-token greedy sequence on the first measured trial.'
-      : 'First measured trial shared ' + prefix + ' of ' + report.output_tokens +
-        ' leading token IDs. Output diverged, so the speed comparison is workload-specific.';
+    byId('quality').textContent = workload.matching_trials === report.measured
+      ? 'Identical ' + report.output_tokens + '-token greedy output in all ' + report.measured + ' measured trials.'
+      : workload.matching_trials + '/' + report.measured + ' measured pairs matched exactly. The first pair shared ' +
+        prefix + ' of ' + report.output_tokens + ' leading token IDs.';
     byId('protocol').textContent = report.warmups + ' warm-ups · ' + report.measured +
       ' measured per runtime · ' + report.output_tokens + ' output tokens · ' + report.context + ' context';
     byId('compare-evidence').href = '/runs/' + encodeURIComponent(comparison.id);

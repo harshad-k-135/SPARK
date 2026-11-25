@@ -9,6 +9,8 @@ The model scope is text-only, batch one, one RTX 3050, and up to 4,096 tokens.
 Vision and the auxiliary multi-token prediction block are outside the
 initial implementation scope.
 
-The staged llama.cpp build passed GPU enumeration and full offload. Matched
-external GPU trials are pending. Windows denied browser launch inside the
-sandbox, so live dashboard screenshots are unavailable there.
+The matched CUDA trial recorded higher decode throughput and lower
+first-token latency for llama.cpp at all tested prompt lengths. SPARK used
+less peak board memory with the tested configuration. Benchmark timings include
+each runtime's local token transport. The dashboard was captured and checked
+using local Chromium headless shell.
