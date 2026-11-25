@@ -38,3 +38,28 @@ variation. The same-session llama.cpp medians were 136.64 ms TTFT,
 [Control](baseline.json) |
 [Raw candidate trials](experiments/batch-prefill-primary.json) |
 [Golden evidence](experiments/batch-prefill-golden.jsonl)
+
+## D01 - Replay packed decode with bucketed CUDA Graphs
+
+- Bottleneck and hypothesis. The audited decoder submits hundreds of kernels
+  per token. Replay should reduce decode latency with packed weights and
+  unchanged prefill behavior.
+- Change. Enable the existing bucket capture path for the persistent CUDA
+  worker. Worker and runner entry points changed in `engine/runtime/cli.cpp`
+  and `benchmark/comparison/compare_cuda.cjs`. The batch-prefill control
+  and candidate use the same single-token math and prompt path.
+- Correctness. CUDA operation tests passed. All 1,280 golden continuation
+  IDs matched. Largest first-step logit-gap error 0.040231. All ten scored
+  pairs against the original GGUF matched every generated token.
+- Results. 50.35 to 51.83 median decode tok/s (+2.94%). P95 decode latency
+  2,529.41 to 2,467.12 ms (-2.46%). Total median latency 3,309.40 to
+  3,258.02 ms (-1.55%). TTFT 785.80 to 805.32 ms (+2.48%).
+  Peak board VRAM rose from 717 to 753 MiB. Peak process working set rose
+  from 408.88 to 427.01 MiB.
+- Decision **KEEP** as a selectable mode. The primary decode change improved
+  across measured trials at a 36 MiB board-memory cost. Continue tracking
+  tail latency and memory at the other two prompt lengths before treating
+  the gain as general.
+
+[Raw trials](experiments/packed-graph-primary.json) |
+[Golden evidence](experiments/packed-graph-golden.jsonl)

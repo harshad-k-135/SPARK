@@ -6,6 +6,7 @@ param(
     [string]$Output = 'build/qwen-cuda-golden.jsonl',
     [ValidateSet('off','bucket','single')][string]$Graph = 'off',
     [switch]$BatchPrefill,
+    [switch]$Q6BlockGemv,
     [int]$Port = 18085
 )
 
@@ -20,10 +21,11 @@ try {
     $env:SPARK_DEVICE = 'cuda'
     $env:SPARK_CUDA_WEIGHTS = 'packed'
     $env:SPARK_CUDA_GRAPH = $Graph
+    $env:SPARK_Q6_BLOCK_GEMV = [string][int]$Q6BlockGemv.IsPresent
     $env:SPARK_BATCH_PREFILL = [string][int]$BatchPrefill.IsPresent
     $env:TEMP = $work
     $env:TMP = $work
-    $arguments = '--model "{0}" --host 127.0.0.1 --port {1} -ngl 99 -c 2048 -np 1 -ctk f32 -ctv f32 -fa off' -f $reference, $Port
+    $arguments = '--model "{0}" --host 127.0.0.1 --port {1} -ngl 99 -c 2048 -np 1 -ctk f32 -ctv f32 -fa off --log-verbosity 4' -f $reference, $Port
     $errorLog = Join-Path $work 'reference-err.log'
     $server = Start-Process -FilePath $llama -ArgumentList $arguments -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput (Join-Path $work 'reference-out.log') -RedirectStandardError $errorLog

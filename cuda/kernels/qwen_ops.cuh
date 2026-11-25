@@ -202,6 +202,37 @@ extern "C" __global__ void packed_matvec(const unsigned char* data, const float*
     if (lane == 0) y[r] = sum;
 }
 
+// Four warps compute four Q6_K output rows. Within a 256-weight block,
+// one lane owns one byte from each 32-byte low/high stripe. Reuse those
+// bytes for four consecutive products while retaining FP32 sum order.
+extern "C" __global__ void q6_block_matvec(const unsigned char* data, const float* x,
+                                            float* y, int cols, int rows, int bytes) {
+    const int lane = threadIdx.x % 32;
+    const int r = blockIdx.x * 4 + threadIdx.x / 32;
+    if (r >= rows) return;
+    const auto* row = data + static_cast<unsigned long long>(r) * bytes;
+    float sum = 0;
+    for (int block = 0; block < cols / 256; ++block) {
+        const auto* p = row + block * 210;
+        const float d = block_half(p + 208);
+        #pragma unroll
+        for (int section = 0; section < 2; ++section) {
+            const int high = p[128 + section * 32 + lane];
+            const int low[2] = {p[section * 64 + lane], p[section * 64 + 32 + lane]};
+            #pragma unroll
+            for (int quarter = 0; quarter < 4; ++quarter) {
+                const int scale = (signed char)p[192 + section * 8 + quarter * 2 + lane / 16];
+                const int ql = (low[quarter % 2] >> (4 * (quarter / 2))) & 15;
+                const int qh = (high >> (2 * quarter)) & 3;
+                const int q = (ql | (qh << 4)) - 32;
+                sum += (d * scale * q) * x[block * 256 + section * 128 + quarter * 32 + lane];
+            }
+        }
+    }
+    for (int i = 16; i; i /= 2) sum += __shfl_down_sync(0xffffffff, sum, i);
+    if (lane == 0) y[r] = sum;
+}
+
 // One 256-lane block writes a contiguous stripe of an unpacked matrix row.
 extern "C" __global__ void unpack_matrix(const unsigned char* data, float* output,
                                           int cols, int bytes, int type) {

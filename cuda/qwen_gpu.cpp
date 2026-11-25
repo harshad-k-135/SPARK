@@ -171,14 +171,14 @@ struct Layer {
 
 struct Kernels {
     CUfunction rms, residual, swiglu, convolve, delta, norm_rope, cache_kv, scores, read_attention;
-    CUfunction packed_matvec, packed_embedding, unpack_matrix;
+    CUfunction packed_matvec, packed_embedding, unpack_matrix, q6_block_matvec;
     explicit Kernels(const Module& module)
         : rms(module.get("rms")), residual(module.get("residual")), swiglu(module.get("swiglu")),
           convolve(module.get("convolve")), delta(module.get("delta")),
           norm_rope(module.get("norm_rope")), cache_kv(module.get("cache_kv")),
           scores(module.get("scores")), read_attention(module.get("read_attention")),
           packed_matvec(module.get("packed_matvec")), packed_embedding(module.get("packed_embedding")),
-          unpack_matrix(module.get("unpack_matrix")) {}
+          unpack_matrix(module.get("unpack_matrix")), q6_block_matvec(module.get("q6_block_matvec")) {}
 };
 
 constexpr int hidden = 1024, width = 3584, vocab = 248320;
@@ -229,12 +229,14 @@ struct GpuModel::Impl {
     int emitted = 0;
     DecodeGraph graph_mode;
     PrefillBuffers prefill_buffers{};
+    bool q6_block_gemv;
     CUdeviceptr cursor = 0;
     float eps = 0, base = 0;
 
     Impl(const Gguf& gguf, const std::filesystem::path& path, std::size_t context, bool trace,
-         DecodeGraph mode, bool packed, bool batch_prefill)
-        : profile(trace), capacity(static_cast<int>(context)), graph_mode(mode) {
+         DecodeGraph mode, bool packed, bool batch_prefill, bool use_q6_block_gemv)
+        : profile(trace), capacity(static_cast<int>(context)), graph_mode(mode),
+          q6_block_gemv(use_q6_block_gemv) {
         validate(gguf, context);
         eps = static_cast<float>(std::get<double>(gguf.metadata("qwen35.attention.layer_norm_rms_epsilon")));
         base = static_cast<float>(std::get<double>(gguf.metadata("qwen35.rope.freq_base")));
@@ -355,6 +357,11 @@ struct GpuModel::Impl {
     }
 
     void mv(const Matrix& m, CUdeviceptr in, CUdeviceptr out) {
+        if (m.type == 14 && q6_block_gemv) {
+            launch(kernel.q6_block_matvec, (m.rows + 3) / 4, 1, 128, m.data, in, out,
+                   m.cols, m.rows, m.bytes);
+            return;
+        }
         if (m.type != 0) {
             launch(kernel.packed_matvec, (m.rows + 3) / 4, 1, 128, m.data, in, out,
                    m.cols, m.rows, m.bytes, m.type);
@@ -554,8 +561,9 @@ struct GpuModel::Impl {
 };
 
 GpuModel::GpuModel(const Gguf& gguf, const std::filesystem::path& path, std::size_t context,
-                   bool profile, DecodeGraph graph, bool packed, bool batch_prefill)
-    : impl_(std::make_unique<Impl>(gguf, path, context, profile, graph, packed, batch_prefill)) {}
+                   bool profile, DecodeGraph graph, bool packed, bool batch_prefill, bool q6_block_gemv)
+    : impl_(std::make_unique<Impl>(gguf, path, context, profile, graph, packed, batch_prefill,
+                                   q6_block_gemv)) {}
 GpuModel::~GpuModel() = default;
 void GpuModel::reset() { impl_->reset(); }
 std::span<const float> GpuModel::prefill(std::span<const TokenId> tokens) { return impl_->prefill(tokens); }
@@ -658,6 +666,10 @@ void test_qwen_cuda_ops() {
                 expected[r] = dot(x, row);
             }
             expect("packed GPU projection", output, expected, 1e-2F);
+            if (type == 14) {
+                run(kernel.q6_block_matvec, 2, 1, 128, weights_gpu, x_gpu, output, columns, rows, row_bytes);
+                expect("block Q6_K projection", output, expected, 1e-2F);
+            }
             const auto embedding = arena.allocate(columns * sizeof(float));
             run(kernel.packed_embedding, 4, 1, 256, weights_gpu, embedding, type);
             unpack_gguf_row(type, std::span(packed).first(row_bytes), row);
