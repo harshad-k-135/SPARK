@@ -5,18 +5,51 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SPARK inference dashboard</title>
   <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/assets/comparison.css">
   <script src="/assets/dashboard.js" defer></script>
+  <script src="/assets/comparison.js" defer></script>
 </head>
 <body>
   <header class="top">
-    <div class="brand">SPARK <span>Inference dashboard</span></div>
+    <div class="brand"><i aria-hidden="true"></i> SPARK <span>GPU benchmark dashboard</span></div>
     <div id="device" class="badge">Connecting</div>
   </header>
   <main>
+    <section class="match" aria-labelledby="match-title">
+      <div class="match-top">
+        <div>
+          <p class="eyebrow">RTX 3050 · Qwen3.5 0.8B</p>
+          <h1 id="match-title">SPARK <span>vs.</span> llama.cpp</h1>
+          <p>Same GGUF, prompt tokens, and GPU. One runtime on the device at a time.</p>
+        </div>
+        <button class="compare-button" id="compare-run" type="button">Run head-to-head</button>
+      </div>
+      <p id="compare-state" role="status"></p>
+      <div id="compare-body" hidden>
+        <div class="compare-controls">
+          <fieldset><legend>Prompt length</legend><div id="context-options" class="segments"></div></fieldset>
+          <fieldset><legend>Metric</legend><div id="metric-options" class="segments"></div></fieldset>
+        </div>
+        <div class="match-grid">
+          <div class="score-card">
+            <p id="winner" class="winner" aria-live="polite"></p>
+            <div id="compare-bars"></div>
+            <p id="quality" class="note"></p>
+          </div>
+          <div class="score-card">
+            <div class="heading"><h2>Measured trials</h2><p id="trial-unit"></p></div>
+            <p class="trial-legend"><span>SPARK</span><span>llama.cpp</span></p>
+            <div id="trial-chart" class="trials-chart" aria-label="Measured trials by engine"></div>
+            <p id="trial-detail" class="note" aria-live="polite"></p>
+          </div>
+        </div>
+        <div class="match-footer"><span id="protocol"></span><a id="compare-evidence">Raw data and telemetry</a></div>
+      </div>
+    </section>
     <div class="intro">
       <div>
-        <h1>Local Qwen inference</h1>
-        <p>Qwen3.5 0.8B · Q4_K_M GGUF · NVIDIA RTX 3050</p>
+        <h2>Local inference</h2>
+        <p>Qwen3.5 0.8B · Q4_K_M GGUF</p>
       </div>
       <p id="model" class="model"></p>
     </div>
@@ -43,11 +76,10 @@
         </div>
       </section>
       <section class="panel">
-        <div class="heading"><h2>Compare</h2><p>512 prompt · 128 output</p></div>
+        <div class="heading"><h2>SPARK tuning</h2><p>512 prompt · 128 output</p></div>
         <div class="comparison">
           <h3>Median decode tokens/sec</h3>
           <div id="chart"></div>
-          <p class="note">The llama.cpp GPU comparison is pending.</p>
         </div>
         <form id="benchmark" class="benchmark">
           <div><label for="mode">Runtime configuration</label>

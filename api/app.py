@@ -26,7 +26,7 @@ class GenerateRequest(BaseModel):
 
 
 class BenchmarkRequest(BaseModel):
-    mode: str = Field(pattern="^(baseline|bucket|packed)$")
+    mode: str = Field(pattern="^(baseline|bucket|packed|head-to-head)$")
 
 
 def connection():
@@ -56,6 +56,9 @@ class Worker:
         self.log = None
         self.tasks = set()
         self.spark = Path(os.environ.get("SPARK_EXE", ROOT / "build" / "cpu" / "spark.exe"))
+        self.llama = Path(os.environ.get(
+            "SPARK_LLAMA_SERVER", ROOT / "build" / "llama-b10159-cuda13" / "llama-server.exe"
+        ))
         self.model = Path(os.environ.get("SPARK_MODEL", ""))
         if not self.spark.is_file() or not self.model.is_file():
             raise RuntimeError("Set SPARK_EXE and SPARK_MODEL to existing files.")
@@ -121,9 +124,14 @@ class Worker:
                 output = DATA / f"{identifier}.json"
                 env = {**os.environ, "SPARK_CUDA_GRAPH": "bucket" if mode == "bucket" else "off",
                        "SPARK_CUDA_WEIGHTS": "packed" if mode == "packed" else "fp32"}
+                if mode == "head-to-head":
+                    command = ("benchmark/comparison/compare_cuda.cjs", str(self.spark),
+                               str(self.llama), str(self.model), str(output))
+                else:
+                    command = ("benchmark/runner/measure_native.cjs", str(self.spark),
+                               str(self.model), str(output))
                 process = await asyncio.create_subprocess_exec(
-                    "node", str(ROOT / "benchmark" / "runner" / "measure_native.cjs"),
-                    str(self.spark), str(self.model), str(output), cwd=ROOT, env=env,
+                    "node", *command, cwd=ROOT, env=env,
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 )
                 _, errors = await process.communicate()
@@ -152,6 +160,7 @@ async def lifespan(app):
         ("graph-bucket", "spark-qwen-graph-bucket.json"),
         ("graph-single", "spark-qwen-graph-single.json"),
         ("packed", "spark-qwen-packed.json"),
+        ("cuda-head-to-head", "spark-vs-llama-cuda.json"),
     ):
         path = RESULTS / filename
         if path.is_file():
@@ -197,8 +206,32 @@ async def generate(request: GenerateRequest):
 @app.get("/runs")
 async def runs():
     with connection() as db:
-        rows = db.execute("SELECT id,state,name,report,error FROM runs ORDER BY rowid DESC").fetchall()
+        rows = db.execute(
+            "SELECT id,state,name,report,error FROM runs "
+            "WHERE name NOT IN ('head-to-head','SPARK vs llama.cpp') ORDER BY rowid DESC"
+        ).fetchall()
     return [row_data(row) for row in rows]
+
+
+@app.get("/api/comparison")
+async def comparison():
+    with connection() as db:
+        row = db.execute(
+            "SELECT id,state,name,report,error FROM runs "
+            "WHERE name IN ('head-to-head','SPARK vs llama.cpp') AND state = 'completed' "
+            "ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()
+    if not row:
+        return None
+    result = row_data(row)
+    report = result["report"]
+    for workload in report["workloads"]:
+        for engine in workload["engines"].values():
+            for trial in engine["trials"]:
+                trial.pop("telemetry", None)
+                trial.pop("generated_token_ids", None)
+        workload.pop("prompt_token_ids", None)
+    return result
 
 
 @app.get("/runs/{identifier}")
@@ -217,6 +250,8 @@ async def run_benchmark(request: BenchmarkRequest):
     worker = app.state.worker
     if worker.tasks:
         raise HTTPException(409, "A benchmark is already queued or running.")
+    if request.mode == "head-to-head" and not worker.llama.is_file():
+        raise HTTPException(503, "The CUDA llama-server binary is unavailable.")
     identifier = uuid.uuid4().hex
     save_run(identifier, "queued", request.mode)
     task = asyncio.create_task(worker.benchmark(identifier, request.mode))
