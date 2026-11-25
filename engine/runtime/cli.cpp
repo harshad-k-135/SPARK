@@ -32,13 +32,13 @@ namespace {
 constexpr auto usage =
     "Usage: spark inspect --model FILE.gguf [--tensors]\n"
     "       spark tokenize --model FILE.gguf --prompt TEXT [--special]\n"
-    "       spark serve --model FILE.gguf\n"
+    "       spark serve --model FILE.gguf [--batch-prefill] [--bucket-graph]\n"
     "       spark generate --model FILE.gguf (--prompt TEXT [--chat] | --prompt-ids IDS)\n"
     "              [--device cpu|cuda] [--max-new-tokens N] [--context N] [--temperature T]\n"
     "              [--top-p P] [--seed N]\n"
     "              [--ignore-eos] [--ids] [--first-logits PATH] [--profile] [--timings]\n"
     "              [--warmups N] [--trials N] [--cuda-graph off|single|bucket]\n"
-    "              [--cuda-weights fp32|packed]\n";
+    "              [--cuda-weights fp32|packed] [--batch-prefill]\n";
 
 template <typename T>
 void parse_number(std::string_view value, T& result, std::string_view option) {
@@ -84,14 +84,15 @@ std::vector<spark::TokenId> encode_prompt(const spark::Tokenizer& tokenizer,
     return prefix;
 }
 
-void serve(const std::filesystem::path& path) {
+void serve(const std::filesystem::path& path, bool batch_prefill, bool bucket_graph) {
 #ifdef SPARK_WITH_CUDA
     constexpr unsigned capacity = 2048;
     const spark::Gguf model(path);
     const spark::Tokenizer tokenizer(model);
     const auto eos = std::get<std::uint64_t>(model.metadata("tokenizer.ggml.eos_token_id"));
     const auto end = tokenizer.encode("<|endoftext|>", true);
-    spark::GpuModel session(model, path, capacity, false, spark::DecodeGraph::off, true);
+    const auto graph = bucket_graph ? spark::DecodeGraph::bucket : spark::DecodeGraph::off;
+    spark::GpuModel session(model, path, capacity, false, graph, true, batch_prefill);
     std::cout << "{\"event\":\"ready\",\"device\":\"cuda\"}\n" << std::flush;
     std::string header;
     while (std::cin >> header) {
@@ -121,9 +122,7 @@ void serve(const std::filesystem::path& path) {
         const auto start = Clock::now();
         auto first = start;
         auto last = start;
-        std::span<const float> logits;
-        for (std::size_t i = 0; i < input.size(); ++i)
-            logits = session.step(input[i], i + 1 == input.size());
+        auto logits = session.prefill(input);
         const auto prefill_end = Clock::now();
         spark::Sampler sampler(logits.size(), {});
         unsigned count = 0;
@@ -162,6 +161,8 @@ void serve(const std::filesystem::path& path) {
     }
 #else
     (void)path;
+    (void)batch_prefill;
+    (void)bucket_graph;
     throw std::runtime_error("this SPARK build has no CUDA worker");
 #endif
 }
@@ -171,6 +172,7 @@ void generate(const std::vector<std::string>& args) {
         (args[3] != "--prompt" && args[3] != "--prompt-ids"))
         throw std::invalid_argument(usage);
     bool chat = false, ids_only = false, ignore_eos = false, profile = false, timings = false;
+    bool batch_prefill = false;
     std::string_view device = "cpu";
     std::string_view graph = "off";
     std::string_view weights = "fp32";
@@ -185,6 +187,7 @@ void generate(const std::vector<std::string>& args) {
         else if (args[i] == "--ignore-eos") ignore_eos = true;
         else if (args[i] == "--profile") profile = true;
         else if (args[i] == "--timings") timings = true;
+        else if (args[i] == "--batch-prefill") batch_prefill = true;
         else if (args[i] == "--device" && i + 1 < args.size()) device = args[++i];
         else if (args[i] == "--cuda-graph" && i + 1 < args.size()) graph = args[++i];
         else if (args[i] == "--cuda-weights" && i + 1 < args.size()) weights = args[++i];
@@ -220,6 +223,8 @@ void generate(const std::vector<std::string>& args) {
         throw std::invalid_argument("--ignore-eos requires greedy sampling");
     if (device != "cpu" && device != "cuda")
         throw std::invalid_argument("--device must be cpu or cuda");
+    if (batch_prefill && device != "cuda")
+        throw std::invalid_argument("--batch-prefill requires --device cuda");
     if (profile && device != "cuda")
         throw std::invalid_argument("--profile requires --device cuda");
     if (graph != "off" && ((graph != "single" && graph != "bucket") || device != "cuda" || profile))
@@ -252,7 +257,7 @@ void generate(const std::vector<std::string>& args) {
         const auto mode = graph == "single" ? spark::DecodeGraph::single
                         : graph == "bucket" ? spark::DecodeGraph::bucket : spark::DecodeGraph::off;
         gpu = std::make_unique<spark::GpuModel>(model, path, context, profile, mode,
-                                               weights == "packed");
+                                               weights == "packed", batch_prefill);
     }
 #else
     if (device == "cuda") throw std::runtime_error("this SPARK build has no CUDA backend");
@@ -271,8 +276,14 @@ void generate(const std::vector<std::string>& args) {
     const auto trial = [&](std::size_t run, bool warmup, bool display) {
         const auto prefill_start = Clock::now();
         std::span<const float> logits;
-        for (std::size_t i = 0; i < input.size(); ++i)
-            logits = step(input[i], i + 1 == input.size());
+#ifdef SPARK_WITH_CUDA
+        if (gpu) logits = gpu->prefill(input);
+        else
+#endif
+        {
+            for (std::size_t i = 0; i < input.size(); ++i)
+                logits = step(input[i], i + 1 == input.size());
+        }
         const auto prefill_end = Clock::now();
         if (!logits_path.empty()) {
             std::ofstream file(logits_path, std::ios::binary);
@@ -414,12 +425,18 @@ int run(const std::vector<std::string>& args) {
         generate(args);
         return 0;
     }
-    if (args[0] == "serve" && args.size() == 3 && args[1] == "--model") {
+    if (args[0] == "serve" && args.size() >= 3 && args[1] == "--model") {
+        bool batch_prefill = false, bucket_graph = false;
+        for (std::size_t i = 3; i < args.size(); ++i) {
+            if (args[i] == "--batch-prefill" && !batch_prefill) batch_prefill = true;
+            else if (args[i] == "--bucket-graph" && !bucket_graph) bucket_graph = true;
+            else throw std::invalid_argument(usage);
+        }
 #ifdef _WIN32
         if (_setmode(_fileno(stdin), _O_BINARY) < 0 || _setmode(_fileno(stdout), _O_BINARY) < 0)
             throw std::runtime_error("cannot configure worker pipe mode");
 #endif
-        serve(std::filesystem::path(std::u8string(args[2].begin(), args[2].end())));
+        serve(std::filesystem::path(std::u8string(args[2].begin(), args[2].end())), batch_prefill, bucket_graph);
         return 0;
     }
     if ((args.size() == 5 || args.size() == 6) && args[0] == "tokenize" && args[1] == "--model" &&

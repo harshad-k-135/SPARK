@@ -171,16 +171,24 @@ struct Layer {
 
 struct Kernels {
     CUfunction rms, residual, swiglu, convolve, delta, norm_rope, cache_kv, scores, read_attention;
-    CUfunction packed_matvec, packed_embedding;
+    CUfunction packed_matvec, packed_embedding, unpack_matrix;
     explicit Kernels(const Module& module)
         : rms(module.get("rms")), residual(module.get("residual")), swiglu(module.get("swiglu")),
           convolve(module.get("convolve")), delta(module.get("delta")),
           norm_rope(module.get("norm_rope")), cache_kv(module.get("cache_kv")),
           scores(module.get("scores")), read_attention(module.get("read_attention")),
-          packed_matvec(module.get("packed_matvec")), packed_embedding(module.get("packed_embedding")) {}
+          packed_matvec(module.get("packed_matvec")), packed_embedding(module.get("packed_embedding")),
+          unpack_matrix(module.get("unpack_matrix")) {}
 };
 
 constexpr int hidden = 1024, width = 3584, vocab = 248320;
+constexpr int prefill_chunk_size = 128;
+constexpr int max_layer_matrix = 6144 * hidden;
+constexpr int prefill_channels = 3 * hidden + 6144 + 2 * 512 + 2 * 2048 + 2 * width + 2 * 16;
+
+struct PrefillBuffers {
+    CUdeviceptr x, n, p, q, k, v, y, gate, up, z, alpha, beta, weights;
+};
 
 void validate(const Gguf& gguf, std::size_t context) {
     if (!context || context > 4096) throw std::invalid_argument("invalid CUDA context length");
@@ -220,11 +228,12 @@ struct GpuModel::Impl {
     int capacity = 0;
     int emitted = 0;
     DecodeGraph graph_mode;
+    PrefillBuffers prefill_buffers{};
     CUdeviceptr cursor = 0;
     float eps = 0, base = 0;
 
     Impl(const Gguf& gguf, const std::filesystem::path& path, std::size_t context, bool trace,
-         DecodeGraph mode, bool packed)
+         DecodeGraph mode, bool packed, bool batch_prefill)
         : profile(trace), capacity(static_cast<int>(context)), graph_mode(mode) {
         validate(gguf, context);
         eps = static_cast<float>(std::get<double>(gguf.metadata("qwen35.attention.layer_norm_rms_epsilon")));
@@ -232,6 +241,10 @@ struct GpuModel::Impl {
         auto budget = static_cast<std::size_t>(6) * context * 512 * 2 * sizeof(float) +
                       static_cast<std::size_t>(18) * (16 * 128 * 128 + 3 * 6144) * sizeof(float) +
                       8 * 1024 * 1024;
+        if (batch_prefill) {
+            budget += (static_cast<std::size_t>(prefill_channels) * prefill_chunk_size +
+                       max_layer_matrix) * sizeof(float) + 13 * 256;
+        }
         for (const auto& [name, t] : gguf.tensors()) {
             if (name.starts_with("blk.24.")) continue;
             const auto enc = gguf_encoding(t.type);
@@ -316,6 +329,12 @@ struct GpuModel::Impl {
         alpha = buffer(16); beta = buffer(16); scores = buffer(context * 8);
         logits = buffer(vocab);
         host.allocate(vocab);
+        if (batch_prefill) {
+            const auto chunk = [&](int channels) { return buffer(prefill_chunk_size * channels); };
+            prefill_buffers = {chunk(hidden), chunk(hidden), chunk(hidden), chunk(6144),
+                               chunk(512), chunk(512), chunk(2048), chunk(width), chunk(width),
+                               chunk(2048), chunk(16), chunk(16), buffer(max_layer_matrix)};
+        }
         if (graph_mode != DecodeGraph::off) {
             static_assert(sizeof(float) == sizeof(int));
             host_cursor.allocate(1);
@@ -359,6 +378,100 @@ struct GpuModel::Impl {
         emitted = 0;
     }
 
+    void gather(TokenId token, CUdeviceptr out) {
+        const auto row = embedding.data + static_cast<std::size_t>(token) * embedding.bytes;
+        if (embedding.type != 0) launch(kernel.packed_embedding, 4, 1, 256, row, out, embedding.type);
+        else SPARK_CUDA(cuMemcpyDtoDAsync(out, row, hidden * sizeof(float), stream.value));
+    }
+
+    void attention(const Layer& layer, CUdeviceptr query, CUdeviceptr key, CUdeviceptr value,
+                   CUdeviceptr out, int position, unsigned extent, CUdeviceptr position_slot) {
+        launch(kernel.norm_rope, 8, 1, 256, query, layer.qnorm.data, 512, position, base, eps, position_slot);
+        launch(kernel.norm_rope, 2, 1, 256, key, layer.knorm.data, 256, position, base, eps, position_slot);
+        launch(kernel.cache_kv, 2, 1, 256, key, value, layer.keys, layer.values, position, position_slot);
+        launch(kernel.scores, extent, 8, 256, query, layer.keys, scores, position + 1, capacity, position_slot);
+        launch(kernel.read_attention, 8, 1, 256, query, layer.values, scores, out,
+               position + 1, capacity, position_slot);
+    }
+
+    void recurrent(const Layer& layer, CUdeviceptr query, CUdeviceptr z_values,
+                   CUdeviceptr a_values, CUdeviceptr b_values, CUdeviceptr out) {
+        launch(kernel.convolve, 24, 1, 256, query, layer.history, layer.convolve.data);
+        launch(kernel.delta, 16, 1, 128, query, z_values, a_values, b_values, layer.a.data,
+               layer.bias.data, layer.rnorm.data, layer.state, out, eps);
+    }
+
+    void project_chunk(const Matrix& matrix, CUdeviceptr in, CUdeviceptr out, int tokens) {
+        CUdeviceptr weights = matrix.data;
+        if (matrix.type != 0) {
+            if (matrix.cols * matrix.rows > max_layer_matrix)
+                throw std::logic_error("prefill projection exceeds unpack scratch");
+            weights = prefill_buffers.weights;
+            launch(kernel.unpack_matrix, (matrix.cols + 255) / 256, matrix.rows, 256,
+                   matrix.data, weights, matrix.cols, matrix.bytes, matrix.type);
+        }
+        // Contiguous token vectors are the columns of B and C in cuBLAS.
+        const float one = 1, zero = 0;
+        SPARK_CUDA(cublasSgemm(blas.value, CUBLAS_OP_T, CUBLAS_OP_N, matrix.rows, tokens,
+                               matrix.cols, &one, reinterpret_cast<const float*>(weights),
+                               matrix.cols, reinterpret_cast<const float*>(in), matrix.cols,
+                               &zero, reinterpret_cast<float*>(out), matrix.rows));
+    }
+
+    void prefill_chunk(std::span<const TokenId> tokens) {
+        const auto& b = prefill_buffers;
+        const int count = static_cast<int>(tokens.size());
+        const auto row = [](CUdeviceptr data, int index, int channels) {
+            return data + static_cast<std::size_t>(index) * channels * sizeof(float);
+        };
+        for (int i = 0; i < count; ++i) gather(tokens[i], row(b.x, i, hidden));
+        for (const auto& l : layers) {
+            launch(kernel.rms, 1, count, 256, b.x, l.norm.data, b.n, hidden, eps);
+            project_chunk(l.q, b.n, b.q, count);
+            if (l.state) {
+                project_chunk(l.z, b.n, b.z, count);
+                project_chunk(l.alpha, b.n, b.alpha, count);
+                project_chunk(l.beta, b.n, b.beta, count);
+                // These updates are causal. The stream orders them before the output projection.
+                for (int i = 0; i < count; ++i)
+                    recurrent(l, row(b.q, i, l.q.rows), row(b.z, i, 2048), row(b.alpha, i, 16),
+                              row(b.beta, i, 16), row(b.y, i, 2048));
+            } else {
+                project_chunk(l.k, b.n, b.k, count);
+                project_chunk(l.v, b.n, b.v, count);
+                for (int i = 0; i < count; ++i)
+                    attention(l, row(b.q, i, l.q.rows), row(b.k, i, 512), row(b.v, i, 512),
+                              row(b.y, i, 2048), length + i, length + i + 1, 0);
+            }
+            project_chunk(l.out, b.y, b.p, count);
+            launch(kernel.residual, 4, count, 256, b.x, b.p, hidden);
+            launch(kernel.rms, 1, count, 256, b.x, l.post.data, b.n, hidden, eps);
+            project_chunk(l.gate, b.n, b.gate, count);
+            project_chunk(l.up, b.n, b.up, count);
+            launch(kernel.swiglu, 14, count, 256, b.gate, b.up, width);
+            project_chunk(l.down, b.gate, b.p, count);
+            launch(kernel.residual, 4, count, 256, b.x, b.p, hidden);
+        }
+        length += count;
+    }
+
+    std::span<const float> prefill(std::span<const TokenId> tokens) {
+        if (tokens.empty() || tokens.size() > static_cast<std::size_t>(capacity - length) ||
+            std::ranges::any_of(tokens, [](TokenId token) { return token >= vocab; }))
+            throw std::out_of_range("invalid CUDA prompt tokens or context length");
+        auto prefix = tokens.first(tokens.size() - 1);
+        if (prefill_buffers.x) {
+            while (!prefix.empty()) {
+                const auto count = std::min(prefix.size(), static_cast<std::size_t>(prefill_chunk_size));
+                prefill_chunk(prefix.first(count));
+                prefix = prefix.subspan(count);
+            }
+        } else {
+            for (const auto token : prefix) step(token, false);
+        }
+        return step(tokens.back(), true);
+    }
+
     void forward(bool emit, bool trace, unsigned extent, CUdeviceptr position_slot) {
         const int position = position_slot ? 0 : length;
         if (trace) profile.mark(0, stream.value);
@@ -370,18 +483,11 @@ struct GpuModel::Impl {
                 mv(l.z, n, z);
                 mv(l.alpha, n, alpha);
                 mv(l.beta, n, beta);
-                launch(kernel.convolve, 24, 1, 256, q, l.history, l.convolve.data);
-                launch(kernel.delta, 16, 1, 128, q, z, alpha, beta, l.a.data, l.bias.data,
-                       l.rnorm.data, l.state, y, eps);
+                recurrent(l, q, z, alpha, beta, y);
             } else {
                 mv(l.k, n, k);
                 mv(l.v, n, v);
-                launch(kernel.norm_rope, 8, 1, 256, q, l.qnorm.data, 512, position, base, eps, position_slot);
-                launch(kernel.norm_rope, 2, 1, 256, k, l.knorm.data, 256, position, base, eps, position_slot);
-                launch(kernel.cache_kv, 2, 1, 256, k, v, l.keys, l.values, position, position_slot);
-                launch(kernel.scores, extent, 8, 256, q, l.keys, scores, position + 1, capacity, position_slot);
-                launch(kernel.read_attention, 8, 1, 256, q, l.values, scores, y, position + 1, capacity,
-                       position_slot);
+                attention(l, q, k, v, y, position, extent, position_slot);
             }
             mv(l.out, y, p);
             launch(kernel.residual, 4, 1, 256, x, p, hidden);
@@ -434,9 +540,7 @@ struct GpuModel::Impl {
     std::span<const float> step(TokenId token, bool emit) {
         if (token >= vocab || length >= capacity) throw std::out_of_range("invalid CUDA token or position");
         const bool trace = emit && emitted == 1 && profile.enabled();
-        const auto row = embedding.data + static_cast<std::size_t>(token) * embedding.bytes;
-        if (embedding.type != 0) launch(kernel.packed_embedding, 4, 1, 256, row, x, embedding.type);
-        else SPARK_CUDA(cuMemcpyDtoDAsync(x, row, hidden * sizeof(float), stream.value));
+        gather(token, x);
         if (emit && emitted > 0 && graph_mode != DecodeGraph::off) replay_graph();
         else forward(emit, trace, length + 1, 0);
         ++length;
@@ -450,10 +554,11 @@ struct GpuModel::Impl {
 };
 
 GpuModel::GpuModel(const Gguf& gguf, const std::filesystem::path& path, std::size_t context,
-                   bool profile, DecodeGraph graph, bool packed)
-    : impl_(std::make_unique<Impl>(gguf, path, context, profile, graph, packed)) {}
+                   bool profile, DecodeGraph graph, bool packed, bool batch_prefill)
+    : impl_(std::make_unique<Impl>(gguf, path, context, profile, graph, packed, batch_prefill)) {}
 GpuModel::~GpuModel() = default;
 void GpuModel::reset() { impl_->reset(); }
+std::span<const float> GpuModel::prefill(std::span<const TokenId> tokens) { return impl_->prefill(tokens); }
 std::span<const float> GpuModel::step(TokenId token, bool logits) { return impl_->step(token, logits); }
 
 void test_qwen_cuda_ops() {

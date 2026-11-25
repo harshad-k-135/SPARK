@@ -20,6 +20,8 @@ __device__ float sum_block(float value, float* scratch) {
 
 extern "C" __global__ void rms(const float* in, const float* w, float* out,
                                  int width, float eps) {
+    in += blockIdx.y * width;
+    out += blockIdx.y * width;
     __shared__ float scratch[256];
     int lane = threadIdx.x;
     float total = 0;
@@ -29,11 +31,15 @@ extern "C" __global__ void rms(const float* in, const float* w, float* out,
 }
 
 extern "C" __global__ void residual(float* x, const float* y, int width) {
+    x += blockIdx.y * width;
+    y += blockIdx.y * width;
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < width) x[i] += y[i];
 }
 
 extern "C" __global__ void swiglu(float* gate, const float* up, int width) {
+    gate += blockIdx.y * width;
+    up += blockIdx.y * width;
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < width) gate[i] = silu(gate[i]) * up[i];
 }
@@ -194,6 +200,17 @@ extern "C" __global__ void packed_matvec(const unsigned char* data, const float*
     for (int i = lane; i < cols; i += 32) sum += packed_value(row, i, type) * x[i];
     for (int i = 16; i; i /= 2) sum += __shfl_down_sync(0xffffffff, sum, i);
     if (lane == 0) y[r] = sum;
+}
+
+// One 256-lane block writes a contiguous stripe of an unpacked matrix row.
+extern "C" __global__ void unpack_matrix(const unsigned char* data, float* output,
+                                          int cols, int bytes, int type) {
+    const int row = blockIdx.y;
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < cols) {
+        const auto* start = data + static_cast<unsigned long long>(row) * bytes;
+        output[row * cols + i] = packed_value(start, i, type);
+    }
 }
 
 extern "C" __global__ void packed_embedding(const unsigned char* row, float* x, int type) {

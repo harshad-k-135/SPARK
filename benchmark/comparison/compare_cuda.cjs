@@ -1,6 +1,6 @@
 const { execFile, spawn } = require('node:child_process');
 const { createHash } = require('node:crypto');
-const { createReadStream } = require('node:fs');
+const { createReadStream, existsSync } = require('node:fs');
 const { writeFile, rename } = require('node:fs/promises');
 const { createServer } = require('node:net');
 const { cpus, release, totalmem } = require('node:os');
@@ -116,10 +116,11 @@ function finish(start, stamps, ids, prefill, sensor) {
         telemetry: samples.map(({time_ms, ...rest}) => ({elapsed_ms: time_ms - start, ...rest})) };
 }
 
-async function sparkSession(exe, model, batchPrefill) {
+async function sparkSession(exe, model, batchPrefill, bucketGraph) {
     const launch = performance.now();
     const flags = ['serve', '--model', model];
     if (batchPrefill) flags.push('--batch-prefill');
+    if (bucketGraph) flags.push('--bucket-graph');
     const proc = managed(exe, flags, { stdio: ['pipe', 'pipe', 'pipe'] });
     proc.child.stdin.on('error', () => {});
     const reader = createInterface({ input: proc.child.stdout })[Symbol.asyncIterator]();
@@ -130,7 +131,7 @@ async function sparkSession(exe, model, batchPrefill) {
     return {
         load_ms: performance.now() - launch,
         pid: proc.child.pid,
-        configuration: 'Packed GGUF CUDA, FP32 KV, graphs off, ' +
+        configuration: 'Packed GGUF CUDA, FP32 KV, ' + (bucketGraph ? 'bucket graphs, ' : 'graphs off, ') +
             (batchPrefill ? '128-token projection batches' : 'serial prefill'),
         stop: proc.stop,
         async trial(prompt, sensor) {
@@ -226,26 +227,33 @@ async function llamaSession(exe, model, device) {
 
 async function main() {
     const [, , spark, llama, model, out, ...options] = process.argv;
-    if (!spark || !llama || !model || !out || options.some(x => !['--smoke', '--primary', '--batch-prefill'].includes(x)))
-        throw new Error('usage: node compare_cuda.cjs SPARK_EXE LLAMA_SERVER_EXE GGUF OUT [--smoke|--primary] [--batch-prefill]');
+    if (!spark || !llama || !model || !out || options.some(x => !['--smoke', '--primary', '--batch-prefill', '--bucket-graph'].includes(x)))
+        throw new Error('usage: node compare_cuda.cjs SPARK_EXE LLAMA_SERVER_EXE GGUF OUT [--smoke|--primary] [--batch-prefill] [--bucket-graph]');
     const smoke = options.includes('--smoke');
     const batchPrefill = options.includes('--batch-prefill');
+    const bucketGraph = options.includes('--bucket-graph');
+    if (existsSync(out)) throw new Error('benchmark output already exists: ' + out);
     const { stdout: idsText } = await exec(spark, ['tokenize', '--model', model, '--prompt', passage.repeat(32)]);
     const ids = JSON.parse(idsText);
     if (ids.length < contexts.at(-1)) throw new Error('primary prompt is too short');
     const { stdout: devices } = await exec(llama, ['--list-devices']);
     const match = devices.match(/^\s*(CUDA\d+):.*RTX 3050/m);
     if (!match) throw new Error('llama.cpp did not enumerate the RTX 3050 CUDA backend');
-    const { stdout: head } = await exec('git', ['rev-parse', 'HEAD']);
+    const { stdout: head } = await exec('git', ['rev-parse', '--verify', '--end-of-options',
+        (process.env.SPARK_SOURCE_COMMIT || 'HEAD') + '^{commit}']);
     const { stdout: version, stderr: versionError } = await exec(llama, ['--version']);
     const { stdout: gpu } = await exec('nvidia-smi', ['--query-gpu=name,driver_version,memory.total', '--format=csv,noheader']);
     let powerMode = null;
     try { powerMode = (await exec('powercfg', ['/getactivescheme'])).stdout.trim(); } catch {}
-    const hash = createHash('sha256');
-    for await (const chunk of createReadStream(model)) hash.update(chunk);
+    async function fileHash(file) {
+        const hash = createHash('sha256');
+        for await (const chunk of createReadStream(file)) hash.update(chunk);
+        return hash.digest('hex');
+    }
+    const [modelHash, sparkHash, llamaHash] = await Promise.all([model, spark, llama].map(fileHash));
     const report = { kind: 'head-to-head', runtime: 'SPARK vs llama.cpp', smoke,
         recorded_at: new Date().toISOString(),
-        model_sha256: hash.digest('hex'), hardware: gpu.trim(), power_mode: powerMode,
+        model_sha256: modelHash, spark_binary_sha256: sparkHash, llama_binary_sha256: llamaHash, hardware: gpu.trim(), power_mode: powerMode,
         host: {os: release(), cpu: cpus()[0].model, logical_cpus: cpus().length, ram_bytes: totalmem()},
         cuda_toolkit: (await exec('nvcc', ['--version']).catch(() => ({stdout: null}))).stdout?.trim() ?? null,
         context: 2048, warmups: smoke ? 0 : warmups, measured: smoke ? 1 : measured,
@@ -258,7 +266,7 @@ async function main() {
         const group = { prompt_tokens: length, prompt_token_ids: prompt, engines: {} };
         const order = length === 512 ? ['llama_cpp', 'spark'] : ['spark', 'llama_cpp'];
         for (const name of order) {
-            const session = await (name === 'spark' ? sparkSession(spark, model, batchPrefill) : llamaSession(llama, model, match[1]));
+            const session = await (name === 'spark' ? sparkSession(spark, model, batchPrefill, bucketGraph) : llamaSession(llama, model, match[1]));
             let sensor;
             try {
                 sensor = telemetry(session.pid);
