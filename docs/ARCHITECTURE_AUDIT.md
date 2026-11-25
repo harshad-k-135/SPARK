@@ -77,3 +77,16 @@ Achieved memory bandwidth, instruction occupancy, and Tensor Core usage
 require kernel counters or disassembly to establish.
 
 [Raw packed CUDA events](../benchmarks/packed-baseline-profile.jsonl)
+
+## Batched prefill trace
+
+A 512-token FP32 chunked prefill trace attributed 137.85 ms to the main
+cuBLAS SGEMM kernel, 67.95 ms to packed weight expansion, 157.38 ms to the
+two attention kernels, and 102.51 ms to DeltaNet update and convolution.
+These are summed CUDA kernel durations through the first vocabulary
+projection from one profiled run. They exclude host dispatch gaps and
+NVRTC startup. The trace motivates a separate lower-precision prefill
+experiment, then causal attention and recurrence work.
+
+[Kernel totals](../benchmarks/prefill-profile-kernels.csv) |
+[Nsight capture](profiles/spark-packed-prefill.nsys-rep)

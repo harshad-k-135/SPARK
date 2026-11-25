@@ -89,3 +89,28 @@ variation. The same-session llama.cpp medians were 136.64 ms TTFT,
 [Raw trials](experiments/q6-block-primary.json) |
 [Golden evidence](experiments/q6-block-golden.jsonl) |
 [Packed baseline CUDA event trace](packed-baseline-profile.jsonl)
+
+## P02 - FP16 operands for batched prefill GEMM
+
+- Bottleneck and hypothesis. Nsight measured 137.85 ms in the dominant
+  SGEMM kernel and 67.95 ms in packed expansion before the first token.
+  FP16 matrix and activation scratch with FP32 accumulation could make
+  the projection fraction faster and lower end-to-end TTFT.
+- Change. `cuda/qwen_gpu.cpp`, `cuda/kernels/qwen_ops.cuh`, and
+  `engine/runtime/cli.cpp` isolate lower precision to packed prefill
+  GEMM operands. The mixed scratch, FP32 output, and separate cuBLAS
+  handle leave the packed decode path unchanged.
+- Correctness. All 1,280 golden decode IDs matched. Maximum first-step
+  logit-gap error was 0.035286. All ten scored comparison pairs matched.
+- Results. TTFT 794.56 to 815.15 ms (+2.59%). Prefill 646.16 to 629.70
+  tok/s (-2.55%). Decode 69.56 to 69.57 tok/s. P95 decode latency
+  1,834.88 to 1,836.36 ms. Peak board VRAM 753 MiB on both arms.
+  Peak process working set increased from 427.02 to 526.77 MiB.
+- Decision **REVERT from the default**. Keep the opt-in path for
+  reproducing the experiment. Additional conversion and library state
+  could offset savings from GEMM. The wall-clock result does not support
+  changing the default precision.
+
+[Raw trials](experiments/fp16-prefill-primary.json) |
+[Golden evidence](experiments/fp16-prefill-golden.jsonl) |
+[FP32 prefill CUDA trace totals](prefill-profile-kernels.csv)
