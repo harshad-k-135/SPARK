@@ -16,7 +16,7 @@ powershell -File scripts/build_cpu.ps1
 & build/cpu/spark.exe tokenize --model 'PATH\TO\Qwen_Qwen3.5-0.8B-Q4_K_M.gguf' --prompt 'What is 2 + 2?'
 $env:OMP_NUM_THREADS = '6'
 & build/cpu/spark.exe generate --model 'PATH\TO\Qwen_Qwen3.5-0.8B-Q4_K_M.gguf' --prompt 'What is 2 + 2? Answer with just the digit.' --chat --max-new-tokens 16
-& build/cpu/spark.exe generate --model 'PATH\TO\Qwen_Qwen3.5-0.8B-Q4_K_M.gguf' --prompt 'What is 2 + 2? Answer with just the digit.' --chat --max-new-tokens 16 --device cuda
+& build/cpu/spark.exe generate --model 'PATH\TO\Qwen_Qwen3.5-0.8B-Q4_K_M.gguf' --prompt 'What is 2 + 2? Answer with just the digit.' --chat --max-new-tokens 16 --device cuda --cuda-weights packed
 ```
 
 Add `--tensors` to list each tensor's shape, format, byte offset, and size.
@@ -31,7 +31,8 @@ Generation defaults to greedy sampling and a context of 2,048 tokens.
 `--chat` selects the single-turn Qwen prompt format with thinking disabled.
 `--temperature`, `--top-p`, and `--seed` configure sampling. The CPU
 implementation expands approximately 3 GB of FP32 weights in host RAM.
-The CUDA baseline expands the same weights into a device arena. It uses
+The CUDA baseline expands the same weights into a device arena. The packed
+path retains the GGUF encodings and unpacks weights inside CUDA projections. It uses
 NVRTC and cuBLAS from the local CUDA toolkit. The Windows build uses the
 toolkit pointed to by `CUDA_PATH`. Pass `--profile` on a CUDA request to
 record GPU stage timings for the first decode step after prefill.
@@ -63,7 +64,7 @@ powershell -File scripts\run_dashboard.ps1 -Model 'PATH\TO\Qwen.gguf'
 
 Open the loopback address printed by Uvicorn, normally
 `http://127.0.0.1:8765/`. **Generate** starts the native CUDA worker on
-demand. **Compare** loads stored trial results and can queue another native
+demand with packed GGUF weights. **Compare** loads stored trial results and can queue another native
 benchmark. The service serializes generation and benchmarks on the GPU.
 An external GPU comparison requires a CUDA-capable llama.cpp build.
 

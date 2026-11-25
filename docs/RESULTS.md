@@ -11,7 +11,7 @@
 | 1 — Qwen CPU parity | Passed | All 20 first tokens and 1,280 greedy continuation IDs matched. Maximum first-step logit-gap error with FP32 KV on both sides was 0.001041. |
 | Native Qwen CUDA generation | Smoke passed | CUDA generated `4` on the RTX 3050 from the supplied GGUF. The arena used 3,088,575,744 bytes at 2,048 context. Fixed-seed CUDA operation tests passed. |
 | 2 — Qwen CUDA parity and baseline | Passed | All 20 first tokens and 1,280 continuation IDs matched. Maximum first-step logit-gap error was 0.001081. Baseline and profiler evidence recorded below. |
-| 3 — Optimized Qwen decode | Passed | Bucketed CUDA Graphs passed all 20 parity cases and raised median native decode throughput from 40.46 to 46.08 tokens/sec on the primary workload. |
+| 3 — Optimized Qwen decode | Passed | Packed GGUF CUDA raised median native decode throughput from 40.46 to 51.21 tokens/sec. The bucketed graph variant reached 46.08. Both passed full parity. |
 | 4 — GPU comparison and control API | Partial | The native FastAPI dashboard served its assets and streamed output from the RTX 3050. The installed external CUDA binary enumerates zero usable GPU devices. |
 
 Target file `Qwen_Qwen3.5-0.8B-Q4_K_M.gguf`, SHA-256
@@ -88,12 +88,22 @@ This comparison is against the native SPARK baseline.
 
 The single-graph variant also passed all 20 prompts. Median decode was
 45.92 tokens/sec, and P95 decode latency was 2,774.40 ms. The bucketed
-variant had the higher measured median and is used by the interactive worker.
+variant had the higher measured median of the two graph modes.
 Both graph measurements used the executable built from `b87af6d`.
 The single-graph raw metadata also records the later documentation-only
 checkout commit present at measurement time.
 [Single-graph raw trials](../benchmark/results/spark-qwen-graph-single.json)
 · [Native throughput chart](../benchmark/results/spark-qwen-native-throughput.svg)
+
+## Packed CUDA result
+
+With graph replay disabled, the packed GGUF path reached 51.21 median
+decode tokens/sec (+26.57% versus the expanded FP32 baseline), 74.43 median
+prefill tokens/sec, and 3,270.22 ms P95 decode latency. Its arena was
+625,908,992 bytes. All 1,280 continuation IDs matched and the maximum
+first-step logit-gap error was 0.001083.
+[Raw trials](../benchmark/results/spark-qwen-packed.json)
+· [Packed CUDA parity](../benchmark/results/qwen-local-smoke/native-cuda-packed-parity.jsonl)
 
 ## Dashboard smoke run
 
@@ -107,3 +117,8 @@ launching the interactive browser from the sandbox, so the frontend was
 verified through its HTTP assets and API.
 [Raw generation events](../benchmark/results/qwen-local-smoke/dashboard-generation.jsonl)
 · [Dashboard-triggered raw trials](../benchmark/results/spark-qwen-dashboard-repeat.json)
+
+The dashboard was restarted with the packed CUDA worker and again streamed
+`4` from the supplied Qwen model. The status endpoint confirmed that the
+packed model remained loaded and the runs endpoint returned the packed
+benchmark results. [Packed dashboard events](../benchmark/results/qwen-local-smoke/dashboard-packed-generation.jsonl)

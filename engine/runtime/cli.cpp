@@ -91,7 +91,7 @@ void serve(const std::filesystem::path& path) {
     const spark::Tokenizer tokenizer(model);
     const auto eos = std::get<std::uint64_t>(model.metadata("tokenizer.ggml.eos_token_id"));
     const auto end = tokenizer.encode("<|endoftext|>", true);
-    spark::GpuModel session(model, path, capacity, false, spark::DecodeGraph::bucket);
+    spark::GpuModel session(model, path, capacity, false, spark::DecodeGraph::off, true);
     std::cout << "{\"event\":\"ready\",\"device\":\"cuda\"}\n" << std::flush;
     unsigned length = 0, maximum = 0;
     while (std::cin >> length >> maximum) {

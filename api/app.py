@@ -26,7 +26,7 @@ class GenerateRequest(BaseModel):
 
 
 class BenchmarkRequest(BaseModel):
-    mode: str = Field(pattern="^(baseline|bucket)$")
+    mode: str = Field(pattern="^(baseline|bucket|packed)$")
 
 
 def connection():
@@ -120,7 +120,7 @@ class Worker:
                 await self.stop()
                 output = DATA / f"{identifier}.json"
                 env = {**os.environ, "SPARK_CUDA_GRAPH": "bucket" if mode == "bucket" else "off",
-                       "SPARK_CUDA_WEIGHTS": "fp32"}
+                       "SPARK_CUDA_WEIGHTS": "packed" if mode == "packed" else "fp32"}
                 process = await asyncio.create_subprocess_exec(
                     "node", str(ROOT / "benchmark" / "runner" / "measure_native.cjs"),
                     str(self.spark), str(self.model), str(output), cwd=ROOT, env=env,
@@ -151,6 +151,7 @@ async def lifespan(app):
         ("baseline-v0", "spark-qwen-v0.json"),
         ("graph-bucket", "spark-qwen-graph-bucket.json"),
         ("graph-single", "spark-qwen-graph-single.json"),
+        ("packed", "spark-qwen-packed.json"),
     ):
         path = RESULTS / filename
         if path.is_file():
@@ -180,7 +181,7 @@ async def dashboard():
 async def status():
     worker = app.state.worker
     active = worker.process is not None and worker.process.returncode is None
-    return {"device": "cuda", "model": worker.model.name, "loaded": active,
+    return {"device": "cuda", "weights": "packed", "model": worker.model.name, "loaded": active,
             "busy": worker.lock.locked()}
 
 
